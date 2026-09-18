@@ -1,0 +1,40 @@
+{
+  "description": "明細 60 行。A4・余白 15mm・フッター付きで 3 ページに分割され、thead が 2 ページ目以降に、tfoot が表の続く各ページ末尾に繰り返されること。scripts/gen-fixture-long.mjs が生成。",
+  "page": {
+    "size": "A4",
+    "margin": "15mm"
+  },
+  "footer": "<div style=\"text-align:center;font-size:8pt;color:#555;padding-top:2mm\">{{pageNumber}} / {{totalPages}}</div>",
+  "expectedPages": 3,
+  "mustContain": [
+    "領収証",
+    "R-2026-000124",
+    "￥356,450-",
+    "品名",
+    "クリアファイル 10 枚組",
+    "288,700",
+    "28,870",
+    "36,000",
+    "2,880",
+    "324,700",
+    "31,750",
+    "株式会社サンプル商店",
+    "1 / 3",
+    "2 / 3",
+    "3 / 3"
+  ],
+  "mustContainOnEveryPage": [
+    "品名",
+    "単価（税抜）",
+    "税抜合計（全 60 行）"
+  ],
+  "amounts": {
+    "taxable10": 288700,
+    "tax10": 28870,
+    "taxable8": 36000,
+    "tax8": 2880,
+    "subtotal": 324700,
+    "taxTotal": 31750,
+    "grandTotal": 356450
+  }
+}

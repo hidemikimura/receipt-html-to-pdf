@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>領収証 No. R-2026-000124</title>
+<!--
+  fixtures/receipt-invoice-long — 明細 60 行・複数ページ検証用（scripts/gen-fixture-long.mjs が生成）
+
+  消費税法 57 条の 4 に定める適格請求書の記載事項 6 項目を含む。
+    (1) 発行事業者の名称・登録番号      → .issuer / .reg-no
+    (2) 取引年月日                       → .meta の「発行日」
+    (3) 取引内容（軽減税率対象品目の旨）→ table.items の品名列、※印
+    (4) 税率ごとの対価の額と適用税率     → table.tax-summary の「税抜金額」
+    (5) 税率ごとの消費税額等             → table.tax-summary の「消費税額」
+    (6) 交付を受ける事業者の名称         → .recipient
+
+  数値は税率ごとに税抜合計を出してから税額を 1 回だけ切り捨てる（端数処理は税率ごとに 1 回のみ）。
+  電子交付のため収入印紙欄は設けない（電子データの領収証は印紙税の課税対象外）。
+
+  v0.2: 角印（透過 PNG）・ロゴ（JPEG）・角丸・::before・再発行透かし（transform + opacity）を含む。
+  透かしは <body class="reissue"> のときだけ表示される（再発行バリアント）。
+  box-shadow・グラデーションは使わない（未対応）。
+-->
+<style>
+  @font-face {
+    font-family: "BIZ UDPGothic";
+    font-weight: 400;
+    src: url("../../fonts/BIZUDPGothic-Regular.ttf") format("truetype");
+  }
+  @font-face {
+    font-family: "BIZ UDPGothic";
+    font-weight: 700;
+    src: url("../../fonts/BIZUDPGothic-Bold.ttf") format("truetype");
+  }
+
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "BIZ UDPGothic", sans-serif;
+    font-size: 10pt;
+    line-height: 1.6;
+    color: #222;
+    background: #fff;
+  }
+
+  /* A4 縦、余白 15mm を想定した本文幅（180mm） */
+  .receipt {
+    position: relative;
+    width: 180mm;
+    margin: 0 auto;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  .title {
+    text-align: center;
+    font-size: 22pt;
+    font-weight: 700;
+    letter-spacing: 0.5em;
+    margin: 0 0 6mm;
+    padding-bottom: 2mm;
+    border-bottom: 2px solid #222;
+  }
+
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 6mm;
+  }
+  .recipient {
+    font-size: 14pt;
+    font-weight: 700;
+    border-bottom: 1px solid #222;
+    padding: 0 2mm 1mm;
+    min-width: 80mm;
+  }
+  .recipient small {
+    display: block;
+    font-size: 8pt;
+    font-weight: 400;
+    color: #555;
+  }
+  .meta {
+    text-align: right;
+    font-size: 9.5pt;
+  }
+  .meta div { margin: 0; }
+  .meta dt, .meta dd { display: inline; margin: 0; }
+
+  .amount {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6mm;
+    margin: 4mm 0 2mm;
+    padding: 3mm 6mm;
+    border: 1px solid #222;
+    border-radius: 6px;
+    background: #f5f5f5;
+  }
+  .amount .label { font-size: 11pt; }
+  .amount .value {
+    font-size: 24pt;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  .amount .note { font-size: 9pt; color: #555; }
+
+  .proviso {
+    margin: 0 0 6mm;
+    padding: 0 2mm;
+  }
+
+  .received {
+    margin: 0 0 6mm;
+    padding: 0 2mm;
+    font-size: 9.5pt;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+  }
+  th, td {
+    border: 1px solid #222;
+    padding: 1.5mm 2mm;
+    vertical-align: middle;
+  }
+  th {
+    background: #eaeaea;
+    font-weight: 700;
+    text-align: center;
+  }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.center { text-align: center; }
+  .items { margin-bottom: 3mm; }
+  .items col.name { width: auto; }
+  .items col.qty  { width: 14mm; }
+  .items col.unit { width: 26mm; }
+  .items col.sub  { width: 28mm; }
+  .items col.rate { width: 14mm; }
+
+  .footnote {
+    font-size: 8.5pt;
+    color: #555;
+    margin: 0 0 5mm;
+    padding: 0 1mm;
+  }
+  .footnote::before { content: "※ "; }
+
+  .summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 6mm;
+    margin-bottom: 8mm;
+  }
+  .tax-summary { width: 100mm; }
+  .tax-summary td.label { font-weight: 700; background: #f5f5f5; white-space: nowrap; }
+  .totals { width: 68mm; }
+  .totals td.label { background: #f5f5f5; font-weight: 700; }
+  .totals tr.grand td { font-size: 11pt; font-weight: 700; }
+
+  .issuer-block {
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+    gap: 6mm;
+    position: relative;
+  }
+  .issuer {
+    font-size: 9.5pt;
+    line-height: 1.7;
+    font-style: normal; /* address 要素の既定の italic を打ち消す */
+    padding-right: 26mm; /* 角印の分の余白 */
+  }
+  .issuer .logo { display: block; height: 10mm; width: auto; margin-bottom: 1mm; }
+  .issuer .name { font-size: 12pt; font-weight: 700; }
+  .issuer .reg-no { letter-spacing: 0.05em; }
+  .seal {
+    position: absolute;
+    right: 2mm;
+    top: -2mm;
+    width: 22mm;
+    height: 22mm;
+    display: block;
+  }
+
+  /* 再発行の透かし（body.reissue のときだけ表示） */
+  .watermark {
+    display: none;
+    position: absolute;
+    left: 50%;
+    top: 42%;
+    transform: translate(-50%, -50%) rotate(-28deg);
+    font-size: 64pt;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    color: #c00;
+    border: 5px solid #c00;
+    border-radius: 10px;
+    padding: 3mm 8mm 3mm 11mm;
+    opacity: 0.22;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  body.reissue .watermark { display: block; }
+
+  .legal {
+    margin-top: 8mm;
+    padding-top: 2mm;
+    border-top: 1px solid #999;
+    font-size: 8pt;
+    color: #555;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+<article class="receipt" id="receipt">
+  <div class="watermark" aria-hidden="true">再発行</div>
+
+  <h1 class="title">領収証</h1>
+
+  <header class="head">
+    <div class="recipient">
+      株式会社テスト商事　御中
+      <small>（登録番号 T9876543210987）</small>
+    </div>
+    <dl class="meta">
+      <div><dt>No. </dt><dd>R-2026-000124</dd></div>
+      <div><dt>発行日 </dt><dd>2026年9月16日</dd></div>
+    </dl>
+  </header>
+
+  <section class="amount">
+    <span class="label">金額</span>
+    <span class="value">￥356,450-</span>
+    <span class="note">（税込）</span>
+  </section>
+
+  <p class="proviso">但し、下記の通り商品代として、上記金額を正に領収いたしました。</p>
+
+  <p class="received">お支払方法：クレジットカード　　お支払日：2026年9月16日</p>
+
+  <table class="items">
+    <colgroup>
+      <col class="name"><col class="qty"><col class="unit"><col class="sub"><col class="rate">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>品名</th>
+        <th>数量</th>
+        <th>単価（税抜）</th>
+        <th>金額（税抜）</th>
+        <th>税率</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Web サイト保守（月額）</td>
+        <td class="num">1</td>
+        <td class="num">500</td>
+        <td class="num">500</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ドメイン更新</td>
+        <td class="num">2</td>
+        <td class="num">1,200</td>
+        <td class="num">2,400</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">3</td>
+        <td class="num">600</td>
+        <td class="num">1,800</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>バナー制作</td>
+        <td class="num">4</td>
+        <td class="num">2,600</td>
+        <td class="num">10,400</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>USB メモリ 64GB</td>
+        <td class="num">1</td>
+        <td class="num">3,300</td>
+        <td class="num">3,300</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">2</td>
+        <td class="num">1,050</td>
+        <td class="num">2,100</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>マウスパッド</td>
+        <td class="num">3</td>
+        <td class="num">4,700</td>
+        <td class="num">14,100</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>A4 コピー用紙 500 枚</td>
+        <td class="num">4</td>
+        <td class="num">5,400</td>
+        <td class="num">21,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">1</td>
+        <td class="num">450</td>
+        <td class="num">450</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>クリアファイル 10 枚組</td>
+        <td class="num">2</td>
+        <td class="num">500</td>
+        <td class="num">1,000</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>Web サイト保守（月額）</td>
+        <td class="num">3</td>
+        <td class="num">1,200</td>
+        <td class="num">3,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">4</td>
+        <td class="num">900</td>
+        <td class="num">3,600</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>SSL 証明書</td>
+        <td class="num">1</td>
+        <td class="num">2,600</td>
+        <td class="num">2,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>バナー制作</td>
+        <td class="num">2</td>
+        <td class="num">3,300</td>
+        <td class="num">6,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">3</td>
+        <td class="num">300</td>
+        <td class="num">900</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>LAN ケーブル 3m</td>
+        <td class="num">4</td>
+        <td class="num">4,700</td>
+        <td class="num">18,800</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>マウスパッド</td>
+        <td class="num">1</td>
+        <td class="num">5,400</td>
+        <td class="num">5,400</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">2</td>
+        <td class="num">750</td>
+        <td class="num">1,500</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>ボールペン（黒）</td>
+        <td class="num">3</td>
+        <td class="num">500</td>
+        <td class="num">1,500</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>クリアファイル 10 枚組</td>
+        <td class="num">4</td>
+        <td class="num">1,200</td>
+        <td class="num">4,800</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">1</td>
+        <td class="num">1,200</td>
+        <td class="num">1,200</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>ドメイン更新</td>
+        <td class="num">2</td>
+        <td class="num">2,600</td>
+        <td class="num">5,200</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>SSL 証明書</td>
+        <td class="num">3</td>
+        <td class="num">3,300</td>
+        <td class="num">9,900</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">4</td>
+        <td class="num">600</td>
+        <td class="num">2,400</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>USB メモリ 64GB</td>
+        <td class="num">1</td>
+        <td class="num">4,700</td>
+        <td class="num">4,700</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>LAN ケーブル 3m</td>
+        <td class="num">2</td>
+        <td class="num">5,400</td>
+        <td class="num">10,800</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">3</td>
+        <td class="num">1,050</td>
+        <td class="num">3,150</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>A4 コピー用紙 500 枚</td>
+        <td class="num">4</td>
+        <td class="num">500</td>
+        <td class="num">2,000</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ボールペン（黒）</td>
+        <td class="num">1</td>
+        <td class="num">1,200</td>
+        <td class="num">1,200</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">2</td>
+        <td class="num">450</td>
+        <td class="num">900</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>Web サイト保守（月額）</td>
+        <td class="num">3</td>
+        <td class="num">2,600</td>
+        <td class="num">7,800</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ドメイン更新</td>
+        <td class="num">4</td>
+        <td class="num">3,300</td>
+        <td class="num">13,200</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">1</td>
+        <td class="num">900</td>
+        <td class="num">900</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>バナー制作</td>
+        <td class="num">2</td>
+        <td class="num">4,700</td>
+        <td class="num">9,400</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>USB メモリ 64GB</td>
+        <td class="num">3</td>
+        <td class="num">5,400</td>
+        <td class="num">16,200</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">4</td>
+        <td class="num">300</td>
+        <td class="num">1,200</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>マウスパッド</td>
+        <td class="num">1</td>
+        <td class="num">500</td>
+        <td class="num">500</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>A4 コピー用紙 500 枚</td>
+        <td class="num">2</td>
+        <td class="num">1,200</td>
+        <td class="num">2,400</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">3</td>
+        <td class="num">750</td>
+        <td class="num">2,250</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>クリアファイル 10 枚組</td>
+        <td class="num">4</td>
+        <td class="num">2,600</td>
+        <td class="num">10,400</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>Web サイト保守（月額）</td>
+        <td class="num">1</td>
+        <td class="num">3,300</td>
+        <td class="num">3,300</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">2</td>
+        <td class="num">1,200</td>
+        <td class="num">2,400</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>SSL 証明書</td>
+        <td class="num">3</td>
+        <td class="num">4,700</td>
+        <td class="num">14,100</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>バナー制作</td>
+        <td class="num">4</td>
+        <td class="num">5,400</td>
+        <td class="num">21,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">1</td>
+        <td class="num">600</td>
+        <td class="num">600</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>LAN ケーブル 3m</td>
+        <td class="num">2</td>
+        <td class="num">500</td>
+        <td class="num">1,000</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>マウスパッド</td>
+        <td class="num">3</td>
+        <td class="num">1,200</td>
+        <td class="num">3,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">4</td>
+        <td class="num">1,050</td>
+        <td class="num">4,200</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>ボールペン（黒）</td>
+        <td class="num">1</td>
+        <td class="num">2,600</td>
+        <td class="num">2,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>クリアファイル 10 枚組</td>
+        <td class="num">2</td>
+        <td class="num">3,300</td>
+        <td class="num">6,600</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">3</td>
+        <td class="num">450</td>
+        <td class="num">1,350</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>ドメイン更新</td>
+        <td class="num">4</td>
+        <td class="num">4,700</td>
+        <td class="num">18,800</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>SSL 証明書</td>
+        <td class="num">1</td>
+        <td class="num">5,400</td>
+        <td class="num">5,400</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">2</td>
+        <td class="num">900</td>
+        <td class="num">1,800</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>USB メモリ 64GB</td>
+        <td class="num">3</td>
+        <td class="num">500</td>
+        <td class="num">1,500</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>LAN ケーブル 3m</td>
+        <td class="num">4</td>
+        <td class="num">1,200</td>
+        <td class="num">4,800</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ミネラルウォーター 500ml×24 ※</td>
+        <td class="num">1</td>
+        <td class="num">300</td>
+        <td class="num">300</td>
+        <td class="center">8%</td>
+      </tr>
+      <tr>
+        <td>A4 コピー用紙 500 枚</td>
+        <td class="num">2</td>
+        <td class="num">2,600</td>
+        <td class="num">5,200</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>ボールペン（黒）</td>
+        <td class="num">3</td>
+        <td class="num">3,300</td>
+        <td class="num">9,900</td>
+        <td class="center">10%</td>
+      </tr>
+      <tr>
+        <td>せんべい 12 枚入 ※</td>
+        <td class="num">4</td>
+        <td class="num">750</td>
+        <td class="num">3,000</td>
+        <td class="center">8%</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="3" style="text-align:right;font-weight:700;background:#f5f5f5">税抜合計（全 60 行）</td>
+        <td class="num" style="font-weight:700">324,700</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+  <p class="footnote">は軽減税率（8%）対象品目です。</p>
+
+  <div class="summary" style="break-inside: avoid">
+    <table class="tax-summary">
+      <thead>
+        <tr>
+          <th>税率区分</th>
+          <th>税抜金額</th>
+          <th>消費税額</th>
+          <th>税込金額</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="label">10% 対象</td>
+          <td class="num">288,700</td>
+          <td class="num">28,870</td>
+          <td class="num">317,570</td>
+        </tr>
+        <tr>
+          <td class="label">8% 対象（軽減税率）</td>
+          <td class="num">36,000</td>
+          <td class="num">2,880</td>
+          <td class="num">38,880</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <table class="totals">
+      <tbody>
+        <tr>
+          <td class="label">小計（税抜）</td>
+          <td class="num">324,700</td>
+        </tr>
+        <tr>
+          <td class="label">消費税合計</td>
+          <td class="num">31,750</td>
+        </tr>
+        <tr class="grand">
+          <td class="label">合計（税込）</td>
+          <td class="num">￥356,450</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer class="issuer-block" style="break-inside: avoid">
+    <address class="issuer">
+      <img class="logo" src="assets/logo.jpg" alt="SAMPLE STORE">
+      <div class="name">株式会社サンプル商店</div>
+      <div class="reg-no">登録番号　T1234567890123</div>
+      <div>〒100-0001　東京都千代田区千代田1-1-1　サンプルビル 5F</div>
+      <div>TEL 03-1234-5678　　Email info@example.com</div>
+    </address>
+    <img class="seal" src="assets/seal.png" alt="社判">
+  </footer>
+
+  <p class="legal">
+    本書は電子的に交付された領収証であり、収入印紙は不要です。
+    本書は消費税法に定める適格請求書の記載事項を満たしています。
+    消費税額は税率ごとに区分した税抜金額の合計に対して算出し、1 円未満を切り捨てています。
+  </p>
+
+</article>
+</body>
+</html>

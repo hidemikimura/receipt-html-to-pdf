@@ -1,0 +1,6 @@
+# files フィールドで許可リスト管理しているが、念のため除外も明示する
+fonts/*.ttf
+out/
+test-results/
+playwright-report/
+types/**/*.map

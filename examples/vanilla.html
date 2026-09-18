@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Receipt html to pdf — Vanilla JS サンプル</title>
+<style>
+  @font-face { font-family: "BIZ UDPGothic"; font-weight: 400; src: url("../fonts/BIZUDPGothic-Regular.ttf"); }
+  @font-face { font-family: "BIZ UDPGothic"; font-weight: 700; src: url("../fonts/BIZUDPGothic-Bold.ttf"); }
+  body { font-family: "BIZ UDPGothic", sans-serif; margin: 24px; }
+  #receipt { width: 180mm; border: 1px solid #ccc; padding: 10mm; box-sizing: border-box; }
+  h1 { text-align: center; letter-spacing: .5em; }
+  .amount { font-size: 24pt; font-weight: 700; text-align: center; margin: 8mm 0; }
+</style>
+</head>
+<body>
+<button id="download">PDF をダウンロード</button>
+<span id="status"></span>
+
+<article id="receipt">
+  <h1>領収証</h1>
+  <p>株式会社テスト商事 御中</p>
+  <p class="amount">￥41,936-</p>
+  <p>但し、商品代として上記金額を正に領収いたしました。</p>
+</article>
+
+<script type="module">
+  // 同じリポジトリ内で試す場合。npm でインストールした場合は
+  //   import { registerFont, htmlToPdf, downloadPdf } from '@hidemikimura/receipt-html-to-pdf';
+  import { registerFont, htmlToPdf, downloadPdf } from '../src/index.js';
+
+  // フォントは 1 回だけ登録する（@font-face と同じファイルを渡す）
+  const fontsReady = Promise.all([
+    registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '../fonts/BIZUDPGothic-Regular.ttf' }),
+    registerFont({ family: 'BIZ UDPGothic', weight: 700, src: '../fonts/BIZUDPGothic-Bold.ttf' }),
+  ]);
+
+  document.getElementById('download').addEventListener('click', async () => {
+    const status = document.getElementById('status');
+    status.textContent = '変換中…';
+    try {
+      await fontsReady;
+      const pdf = await htmlToPdf(document.getElementById('receipt'), {
+        page: { size: 'A4', margin: '15mm' },
+        metadata: { title: '領収証', author: '株式会社サンプル商店' },
+        onWarning: (w) => console.warn('[receipt-html-to-pdf]', w.code, w.message),
+      });
+      downloadPdf(pdf, 'receipt.pdf');
+      status.textContent = `完了（${Math.round(pdf.size / 1024)} KB）`;
+    } catch (e) {
+      status.textContent = `失敗: ${e.message}`;
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+{
+  "name": "@hidemikimura/receipt-html-to-pdf",
+  "version": "1.0.0",
+  "description": "Receipt html to pdf — ブラウザ内で HTML/CSS をテキスト選択可能なベクター PDF に変換するライブラリ（日本の領収証・適格請求書向け）",
+  "license": "MIT",
+  "author": "Hidemi Kimura",
+  "homepage": "https://github.com/hidemikimura/receipt-html-to-pdf#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hidemikimura/receipt-html-to-pdf.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hidemikimura/receipt-html-to-pdf/issues"
+  },
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./min": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/receipt-html-to-pdf.min.js"
+    }
+  },
+  "files": [
+    "src",
+    "dist/receipt-html-to-pdf.min.js",
+    "dist/receipt-html-to-pdf.min.js.map",
+    "types",
+    "examples",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p jsconfig.json",
+    "types": "tsc -p jsconfig.json --declaration --emitDeclarationOnly --noEmit false --outDir types",
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "e2e": "node scripts/e2e.mjs && node scripts/verify.mjs && node scripts/e2e.mjs receipt-invoice reissue && node scripts/verify.mjs receipt-invoice reissue && node scripts/e2e.mjs receipt-invoice-long && node scripts/verify.mjs receipt-invoice-long",
+    "fixtures": "node scripts/gen-fixture-long.mjs",
+    "fonts": "sh scripts/fetch-fonts.sh",
+    "dev": "npx --yes serve -l 5173 .",
+    "prepublishOnly": "npm run typecheck && npm test && npm run types && npm run build -- --check",
+    "pack:check": "npm pack --dry-run"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "esbuild": "^0.28.2",
+    "pdfjs-dist": "^4.10.0",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "pdf",
+    "html-to-pdf",
+    "receipt",
+    "invoice",
+    "browser",
+    "vector",
+    "japanese",
+    "invoice-jp",
+    "receipt-jp",
+    "vector-pdf",
+    "truetype-subset"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
