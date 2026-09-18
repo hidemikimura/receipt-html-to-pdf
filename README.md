@@ -8,7 +8,7 @@
 - レイアウトはブラウザに任せ（非表示 iframe で描画して計測）、描画だけを PDF 命令へ変換
 - 日本語フォントをサブセット化して埋め込み（TrueType `glyf` アウトラインの静的 TTF）
 
-> **v1.0.0** — API 凍結。テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・複数ページ（行を跨がない分割、`break-*`、`thead` / `tfoot` の繰り返し、ヘッダー／フッター）に対応。依存ゼロ、minify バンドルは gzip 19KB。
+> **v0.1.0**（初回公開）— テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・複数ページ（行を跨がない分割、`break-*`、`thead` / `tfoot` の繰り返し、ヘッダー／フッター）に対応。依存ゼロ、minify バンドルは gzip 19KB。
 > Chromium / Firefox / WebKit の 3 ブラウザで Playwright テスト（テキスト抽出・ページ分割・画素差分）に合格。対応 CSS は [docs/css-support.md](docs/css-support.md)、設計と経緯は [docs/design.md](docs/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使い方
@@ -75,7 +75,7 @@ brew install qpdf                                # 任意: 生成 PDF の構造�
 
 CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイズ検査の後、3 ブラウザ並列でブラウザテストを流し、生成された PDF を `qpdf --check` で検証する。
 
-## 対応範囲（v1.0）
+## 対応範囲（v0.1.0）
 
 | 対応 | 未対応（onWarning で通知） |
 |---|---|
@@ -100,7 +100,7 @@ CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイ�
 2. `npm run pack:check` で tarball の内容を確認する（`files` で許可リスト管理。フォント・フィクスチャ・テストは含まれない）
 3. `npm login`（スコープ `@hidemikimura` の所有者アカウント）
 4. `npm publish` — `prepublishOnly` が typecheck → 単体テスト → `.d.ts` 生成 → minify ビルド + サイズ検査を自動で流す。`publishConfig.access` が `public` なのでスコープ付きでも無料で公開される
-5. `git tag v1.0.0 && git push --tags`
+5. `git tag v0.1.0 && git push --tags`
 
 初回公開前に `package.json` の `repository` / `homepage` / `bugs` の URL（`github.com/hidemikimura/receipt-html-to-pdf` を仮置き）を実際のリポジトリに合わせること。
 

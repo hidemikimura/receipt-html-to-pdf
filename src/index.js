@@ -80,7 +80,7 @@ export { expandPrintMediaCss } from './renderer.js';
  */
 
 /** ライブラリのバージョン（package.json と同期） */
-export const version = '1.0.0';
+export const version = '0.1.0';
 
 /** モジュール共有のフォントレジストリ */
 const registry = new FontRegistry();

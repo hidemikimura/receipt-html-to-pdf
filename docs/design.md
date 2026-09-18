@@ -2,9 +2,9 @@
 
 - 作成日: 2026-09-16（同日、方針確定）
 - 作成者: 木村英実（ecx Inc.）
-- ステータス: **v1.0.0**（2026-09-16）。API 凍結済み。以後は v1.x の拡張
+- ステータス: 機能は内部マイルストーン v1.0 まで完了。**npm 初回公開バージョンは 0.1.0**（2026-09-18、API は 1.0.0 まで変更の可能性あり）
 - ライブラリ名: **Receipt html to pdf**
-- npm パッケージ名: `@hidemikimura/receipt-html-to-pdf`（公開準備済み、`npm publish` 待ち）
+- npm パッケージ名: `@hidemikimura/receipt-html-to-pdf`（0.1.0 として公開準備済み、`npm publish` 待ち）
 - 実装言語: 素の JavaScript（ESM）+ JSDoc 型注釈（`checkJs` で型検査、`.d.ts` は JSDoc から生成）
 - ライセンス: MIT
 - リポジトリ: `/Users/hidemikimura/Downloads/receipt-html-to-pdf`
