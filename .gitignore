@@ -1,0 +1,17 @@
+node_modules/
+dist/
+
+coverage/
+test-results/
+playwright-report/
+.DS_Store
+
+# フォントファイルはコミットしない（npm run fonts で取得）
+fonts/*.ttf
+fonts/*.otf
+out/
+*.map
+
+# IDE
+.idea/
+.vscode/
