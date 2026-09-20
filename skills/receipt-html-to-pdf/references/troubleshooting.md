@@ -23,6 +23,7 @@
 | カスタム要素の中身が出ない（枠だけになる） | `closed` なシャドウルート、または `Element.getHTML()` が無いブラウザ | `mode: 'open'` にする。警告（`unsupported-css`）にブラウザ側の理由が出ている |
 | カスタム要素の中身が古い | `connectedCallback` の描画が終わる前に変換した | `customElements.whenDefined()` と `document.fonts.ready` を待ってから呼ぶ |
 | シャドウ外の CSS が当たらない | 文書のスタイルシートはシャドウツリーに届かない（ブラウザの仕様どおり） | 必要な CSS をシャドウルート内に置くか、`stylesheets` に文字列で渡す |
+| 右端が切れる | 内容が本文領域より横に広い。`other` の警告にはみ出し量が出る（0.2.1 以降） | A4・余白 15mm なら本文領域は 180mm。固定幅 + `padding` / `border` には `box-sizing: border-box` を付ける。縮まない表なら列幅を見直す |
 | 画像が出ない | クロスオリジンで CORS ヘッダーが無い | `crossorigin="anonymous"` と `Access-Control-Allow-Origin` を設定する。`image-failed` 警告が出ている |
 | 影や角丸グラデーションが消える | 未対応 CSS | `onWarning` の `unsupported-css` を見る。ボーダーや単色で代替する |
 | テーブルの罫線が二重になる | `border-collapse: separate` のまま隣接セルに罫線を引いた | `border-collapse: collapse` を使う |

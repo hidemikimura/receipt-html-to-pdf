@@ -1,6 +1,6 @@
 {
   "name": "@hidemikimura/receipt-html-to-pdf",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Receipt html to pdf — ブラウザ内で HTML/CSS をテキスト選択可能なベクター PDF に変換するライブラリ（日本の領収証・適格請求書向け）",
   "license": "MIT",
   "author": "Hidemi Kimura",

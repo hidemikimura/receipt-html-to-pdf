@@ -10,7 +10,7 @@
 
 **ドキュメント: https://hidemikimura.github.io/receipt-html-to-pdf/** （[デモ](https://hidemikimura.github.io/receipt-html-to-pdf/demo.html) / [API リファレンス](https://hidemikimura.github.io/receipt-html-to-pdf/api.html) / [対応 CSS 一覧](https://hidemikimura.github.io/receipt-html-to-pdf/css.html)）
 
-> **v0.2.0** — テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・複数ページ（行を跨がない分割、`break-*`、`thead` / `tfoot` の繰り返し、ヘッダー／フッター）に加え、**シャドウ DOM（Web Components）** に対応。依存ゼロ、minify バンドルは gzip 20KB。
+> **v0.2.1** — テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・複数ページ（行を跨がない分割、`break-*`、`thead` / `tfoot` の繰り返し、ヘッダー／フッター）に加え、**シャドウ DOM（Web Components）** に対応。依存ゼロ、minify バンドルは gzip 20KB。
 > Chromium / Firefox / WebKit の 3 ブラウザで Playwright テスト（テキスト抽出・ページ分割・画素差分）に合格。対応 CSS は [docs/css-support.md](docs/css-support.md)、設計と経緯は [docs/design.md](docs/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使い方
@@ -41,7 +41,7 @@ downloadPdf(pdf, 'receipt.pdf');
 
 主なオプション（`ConvertOptions`、型は `types/index.d.ts`）: `page: { size, orientation, margin }`、`header` / `footer`（`{{pageNumber}}` `{{totalPages}}`）、`stylesheets: 'inherit' | 'none' | [url または CSS 文字列]`、`mediaPrint`、`fontFallback`、`metadata`、`compress`、`baseUrl`、`onWarning`。
 
-サンプル: [`examples/vanilla.html`](examples/vanilla.html)（`npm run dev` 後に `/examples/vanilla.html`）、[`examples/react.jsx`](examples/react.jsx)、[`examples/lit.js`](examples/lit.js)（シャドウ DOM はそのまま変換できる）。
+サンプル: [`examples/cdn.html`](examples/cdn.html)（CDN から読むだけ、ビルド不要）、[`examples/vanilla.html`](examples/vanilla.html)（`npm run dev` 後に `/examples/vanilla.html`）、[`examples/react.jsx`](examples/react.jsx)、[`examples/lit.js`](examples/lit.js)（シャドウ DOM はそのまま変換できる）。
 
 ## インストール
 
@@ -50,6 +50,22 @@ npm install @hidemikimura/receipt-html-to-pdf
 ```
 
 `import ... from '@hidemikimura/receipt-html-to-pdf'` でソース（ESM）、`'@hidemikimura/receipt-html-to-pdf/min'` で minify 済み単一ファイル（`npm run build` で生成）を読み込める。
+
+### CDN から読み込む（ビルド不要）
+
+`dist/` の minify 済みファイルは依存ゼロの単一 ESM なので、CDN の URL をそのまま `import` できる。npm もバンドラーも要らない。
+
+```html
+<script type="module">
+  import { registerFont, htmlToPdf, downloadPdf }
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+
+  await registerFont({ family: 'BIZ UDPGothic', src: '/fonts/BIZUDPGothic-Regular.ttf' });
+  downloadPdf(await htmlToPdf(document.querySelector('#receipt')), 'receipt.pdf');
+</script>
+```
+
+バージョン（`@0.2.1`）は固定すること。unpkg でも同じ。グローバル変数を配るビルド（IIFE / UMD）は用意していないが、`import * as ReceiptHtmlToPdf` して `window` に載せれば `type="module"` でない普通のスクリプトからも呼べる。ファイル 1 つで動く一式は [`examples/cdn.html`](examples/cdn.html)。
 
 ## 開発
 
@@ -77,7 +93,7 @@ brew install qpdf                                # 任意: 生成 PDF の構造�
 
 CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイズ検査の後、3 ブラウザ並列でブラウザテストを流し、生成された PDF を `qpdf --check` で検証する。
 
-## 対応範囲（v0.2.0）
+## 対応範囲（v0.2.1）
 
 | 対応 | 未対応（onWarning で通知） |
 |---|---|
@@ -125,7 +141,7 @@ npm run site:dev    # 組み立てて http://localhost:5174 で表示
 2. `npm run pack:check` で tarball の内容を確認する（`files` で許可リスト管理。フォント・フィクスチャ・テストは含まれない）
 3. `npm login`（スコープ `@hidemikimura` の所有者アカウント）
 4. `npm publish` — `prepublishOnly` が typecheck → 単体テスト → `.d.ts` 生成 → minify ビルド + サイズ検査を自動で流す。`publishConfig.access` が `public` なのでスコープ付きでも無料で公開される
-5. `git tag v0.2.0 && git push --tags`
+5. `git tag v0.2.1 && git push --tags`
 
 ## ライセンス
 

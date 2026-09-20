@@ -219,3 +219,49 @@ test('シャドウルート内の要素を渡すと、そのツリーのスタ�
   const { pages } = await extractText(bytes);
   expect(pages.join('\n').replace(/\s/g, '')).toContain('シャドウ内のスタイル');
 });
+
+test('本文領域より横に広い内容は警告が出る', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const { tooWide, justFits } = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    const run = async (css) => {
+      const out = [];
+      await lib.htmlToPdf(`<div id="r" style="${css}">はみ出しの確認</div>`, {
+        stylesheets: ['#r{font-family:"BIZ UDPGothic";font-size:12px}'],
+        page: { size: 'A4', margin: '15mm' },
+        output: 'uint8array',
+        onWarning: (w) => out.push(`${w.code}: ${w.message}`),
+      });
+      return out;
+    };
+    return {
+      // 180mm + padding + border が content-box ではみ出す
+      tooWide: await run('width:180mm;padding:16px;border:1px solid #000'),
+      // box-sizing: border-box なら 180mm ちょうどで収まる
+      justFits: await run('width:180mm;padding:16px;border:1px solid #000;box-sizing:border-box'),
+    };
+  });
+  expect(tooWide.join('\n')).toMatch(/wider than the page content area/);
+  expect(justFits).toEqual([]);
+});
+
+test('親文書の body マージンは PDF に持ち込まれない', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const warnings = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    // ページ側が body にマージンを持っていても、用紙の余白は options.page.margin だけで決まる
+    document.body.style.margin = '40px';
+    const out = [];
+    await lib.htmlToPdf('<div id="r">左端の位置を見る</div>', {
+      stylesheets: ['#r{font-family:"BIZ UDPGothic";font-size:12px;width:180mm}', 'body{margin:40px}'],
+      page: { size: 'A4', margin: '15mm' },
+      output: 'uint8array',
+      onWarning: (w) => out.push(`${w.code}: ${w.message}`),
+    });
+    return out;
+  });
+  // body マージンが効いていると 180mm + 80px で本文領域をはみ出し、はみ出し警告が出る
+  expect(warnings).toEqual([]);
+});

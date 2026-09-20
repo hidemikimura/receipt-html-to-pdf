@@ -93,7 +93,7 @@ export { expandPrintMediaCss } from "./renderer.js";
  * @typedef {Element|string} ConvertInput
  */
 /** ライブラリのバージョン（package.json と同期） */
-export const version: "0.2.0";
+export const version: "0.2.1";
 /**
  * 登録するフォントの定義。
  * `src` は TrueType アウトライン（glyf）を持つ静的 TTF のみ対応。

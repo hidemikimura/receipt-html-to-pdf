@@ -50,6 +50,7 @@ export async function renderDocument(input, opts) {
   fit();
   // レイアウトを確定させる
   void doc.body.offsetHeight;
+  warnIfTooWide(doc, opts.widthPx, opts.warn ?? (() => {}));
 
   return {
     iframe,
@@ -68,7 +69,9 @@ export async function renderDocument(input, opts) {
 function buildHtml(input, opts) {
   const baseUrl = opts.baseUrl ?? document.baseURI;
   const base = `<base href="${escapeAttr(baseUrl)}">`;
-  const reset = `<style data-rhtp-reset>html,body{margin:0;padding:0;background:transparent}html{-webkit-text-size-adjust:100%}</style>`;
+  // 親文書の body マージンが PDF に持ち込まれると内容が右へずれて右端が切れるので、
+  // !important で確実に打ち消す（用紙の余白は options.page.margin が受け持つ）。
+  const reset = `<style data-rhtp-reset>html,body{margin:0 !important;padding:0 !important;background:transparent}html{-webkit-text-size-adjust:100%}</style>`;
 
   if (typeof input === 'string') {
     // 完全な HTML 文書ならそのまま。<head> の直後に base とリセットを差し込む。
@@ -149,6 +152,29 @@ function shadowHostStyles(input, stylesheets, mediaPrint) {
     node = root.host.getRootNode();
   }
   return parts.map((css) => `<style>${mediaPrint ? expandPrintMediaCss(css) : css}</style>`).join('');
+}
+
+/**
+ * 内容が本文領域より横に広いと、右側が切れたまま気づかれにくいので警告する。
+ * 固定幅 + `box-sizing: content-box` や、畳めない表が原因になりやすい。
+ *
+ * @param {Document} doc
+ * @param {number} widthPx  本文領域の幅（px）
+ * @param {(w: import('./index.js').ConversionWarning) => void} warn
+ */
+function warnIfTooWide(doc, widthPx, warn) {
+  const width = Math.max(doc.documentElement.scrollWidth, doc.body.scrollWidth);
+  const over = width - widthPx;
+  // 1px 未満は丸め誤差とみなす
+  if (over < 1) return;
+  const mm = (/** @type {number} */ px) => Math.round((px / 96) * 25.4 * 10) / 10;
+  warn({
+    code: 'other',
+    message:
+      `Content is ${Math.round(over)}px (${mm(over)}mm) wider than the page content area ` +
+      `(${Math.round(width)}px vs ${Math.round(widthPx)}px); the right side will be clipped. ` +
+      'Common causes: a fixed width plus padding/border without box-sizing: border-box, or a table that cannot shrink.',
+  });
 }
 
 /** シャドウルートを持てない要素（void 要素）。outerHTML にフォールバックする。 */

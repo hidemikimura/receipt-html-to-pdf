@@ -2,6 +2,23 @@
 
 設計と経緯の詳細は docs/design.md。
 
+## 0.2.1 — 右端が切れる不具合の修正（2026-09-20）
+
+### 追加
+
+- 内容が本文領域より横に広いとき、`onWarning` に `other` の警告を出すようにした（はみ出し量つき）。これまでは右端が黙って切れていた
+
+### 修正
+
+- **親文書の `body` マージンが PDF に持ち込まれ、内容が右へずれて右端が切れていた**。iframe に差し込むリセットは収集したスタイルより前に置かれるため、ページ側の `body { margin: … }` に負けていた。`!important` で確実に打ち消すようにした（用紙の余白は `options.page.margin` が受け持つ）
+- `examples/cdn.html` の `#receipt` に `box-sizing: border-box` が無く、`padding` と `border` の分だけ右端が切れていた
+
+### ドキュメント
+
+- CDN から読み込む使い方を追加（README / API リファレンス / サイトのクイックスタート / skill）。`dist/` の minify 済みファイルは依存ゼロの単一 ESM なので、jsDelivr や unpkg の URL をそのまま `import` できる
+- `examples/cdn.html` を追加。ファイル 1 つ、ビルドもバンドラーも無しで動く領収証 PDF の例
+- 通常の `<script>` から使う方法（`import * as ReceiptHtmlToPdf` して `window` に載せる）と、モジュールスクリプトの実行順の注意を明記
+
 ## 0.2.0 — シャドウ DOM 対応（2026-09-20）
 
 ### 追加

@@ -82,6 +82,14 @@ downloadPdf(pdf, 'receipt.pdf');</code></pre>
   src: url("/fonts/BIZUDPGothic-Regular.ttf");
 }</code></pre>
 
+  <h3>npm を使わない場合</h3>
+  <p><code>dist/</code> の minify 済みファイルは依存ゼロの単一 ESM なので、CDN の URL をそのまま読めます。ビルドもバンドラーも要りません。</p>
+  <pre><code>&lt;script type="module"&gt;
+  import { registerFont, htmlToPdf, downloadPdf }
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+&lt;/script&gt;</code></pre>
+  <p>バージョンは固定してください。通常の <code>&lt;script&gt;</code> から呼びたい場合を含め、詳しくは <a href="./api.html#cdn">API リファレンスの「CDN から読み込む」</a>を見てください。</p>
+
   <h2>フォントの制約</h2>
   <p>ブラウザは OS のフォントファイルを読めないため、PDF に埋め込むフォントはアプリ側が渡します。使えるのは <strong>TrueType（<code>glyf</code> アウトライン）の静的 TTF</strong> だけです。</p>
   <table>

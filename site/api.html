@@ -30,6 +30,7 @@
     <strong>目次</strong>
     <ul>
       <li><a href="#import">読み込み</a></li>
+      <li><a href="#cdn">CDN から読み込む</a></li>
       <li><a href="#registerfont">registerFont()</a></li>
       <li><a href="#htmltopdf">htmlToPdf()</a></li>
       <li><a href="#options">ConvertOptions</a></li>
@@ -48,10 +49,46 @@ import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf';
 
 // minify 済みの単一ファイル（gzip 19KB）
 import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf/min';</code></pre>
-  <p>CDN から直接読み込むこともできます。</p>
+  <h3 id="cdn">CDN から読み込む（ビルド不要）</h3>
+  <p>npm や バンドラーを使わず、HTML に <code>&lt;script type="module"&gt;</code> を 1 つ置くだけで動きます。<code>dist/</code> の minify 済みファイルは依存ゼロの単一 ESM なので、jsDelivr や unpkg の URL をそのまま読めます。</p>
   <pre><code>&lt;script type="module"&gt;
-  import { registerFont, htmlToPdf } from 'https://esm.sh/@hidemikimura/receipt-html-to-pdf';
+  import { registerFont, htmlToPdf, downloadPdf }
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+
+  await registerFont({ family: 'BIZ UDPGothic', src: '/fonts/BIZUDPGothic-Regular.ttf' });
+  downloadPdf(await htmlToPdf(document.querySelector('#receipt')), 'receipt.pdf');
 &lt;/script&gt;</code></pre>
+  <div class="note">
+    <p><strong>バージョンは固定する</strong>のが安全です。<code>@0.2.1</code> を外すと最新版が読み込まれ、更新のたびに挙動が変わる可能性があります。</p>
+  </div>
+  <p>unpkg でも同じです。<code>esm.sh</code> は依存の解決までしてくれますが、このライブラリは依存ゼロなので、上のように <code>dist/</code> を直接指すのが一番速く読み込めます。</p>
+  <pre><code>&lt;script type="module"&gt;
+  import { registerFont, htmlToPdf }
+    from 'https://unpkg.com/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+&lt;/script&gt;</code></pre>
+
+  <h3 id="global">通常の &lt;script&gt; から使う</h3>
+  <p>グローバル変数を配るビルド（IIFE / UMD）は用意していませんが、モジュールスクリプトを 1 行挟めば <code>window</code> に載せられます。以降は <code>type="module"</code> でない普通のスクリプトやインラインの <code>onclick</code> からも呼べます。</p>
+  <pre><code>&lt;script type="module"&gt;
+  import * as ReceiptHtmlToPdf
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+  window.ReceiptHtmlToPdf = ReceiptHtmlToPdf;
+  await ReceiptHtmlToPdf.registerFont({ family: 'BIZ UDPGothic', src: '/fonts/BIZUDPGothic-Regular.ttf' });
+  document.dispatchEvent(new Event('rhtp-ready'));
+&lt;/script&gt;
+
+&lt;script&gt;
+  document.addEventListener('rhtp-ready', () =&gt; {
+    document.querySelector('#save').onclick = async () =&gt; {
+      const { htmlToPdf, downloadPdf } = window.ReceiptHtmlToPdf;
+      downloadPdf(await htmlToPdf(document.querySelector('#receipt')), 'receipt.pdf');
+    };
+  });
+&lt;/script&gt;</code></pre>
+  <div class="note">
+    <p>モジュールスクリプトは <code>defer</code> と同じ扱いで、通常のスクリプトより<strong>後に</strong>実行されます。読み込み完了を待たずに <code>window.ReceiptHtmlToPdf</code> を参照すると <code>undefined</code> になるので、上のようにイベントで知らせるか、ボタン側を最初 <code>disabled</code> にしておきます。</p>
+  </div>
+  <p>動く一式は <a href="https://github.com/hidemikimura/receipt-html-to-pdf/blob/main/examples/cdn.html"><code>examples/cdn.html</code></a> にあります。ファイル 1 つで、ビルドもサーバーも要りません。</p>
 
   <h2 id="registerfont">registerFont(font)</h2>
   <p>PDF に埋め込むフォントを登録します。<strong>アプリの起動時に一度だけ</strong>呼べば、以降の変換で再利用されます（パース結果はモジュール内にキャッシュされます）。同じ family / weight / style を再登録すると上書きします。</p>
@@ -117,8 +154,12 @@ import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf/min';
       <tr><td><code>missing-glyph</code></td><td>グリフが無く □ で代替した</td><td>丸囲み数字・㈱・㍿ など。<code>text</code> に該当文字が入る</td></tr>
       <tr><td><code>missing-font</code></td><td>font-family に合うフォントが無く、その文字列を飛ばした</td><td><code>registerFont</code> し忘れ、または <code>fontFallback</code> 未設定</td></tr>
       <tr><td><code>image-failed</code></td><td>画像を読めず描かなかった</td><td>CORS ヘッダー無しのクロスオリジン画像、404</td></tr>
+      <tr><td><code>other</code></td><td>内容が本文領域より横に広く、右側が切れる</td><td>固定幅に <code>padding</code> / <code>border</code> が乗って <code>box-sizing: border-box</code> が無い、縮まない表</td></tr>
     </tbody>
   </table>
+  <div class="note">
+    <p>右端が切れるのは一番気づきにくい失敗です。A4・余白 15mm なら本文領域は <strong>180mm ちょうど</strong>。<code>width: 180mm</code> に <code>padding</code> や <code>border</code> を足すと、<code>box-sizing: border-box</code> が無い限りその分はみ出します。</p>
+  </div>
 
   <h2 id="others">その他の関数</h2>
   <h3>downloadPdf(pdf, filename)</h3>

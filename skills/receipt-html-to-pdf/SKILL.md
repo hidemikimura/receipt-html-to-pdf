@@ -40,6 +40,17 @@ const pdf = await htmlToPdf(document.getElementById('receipt'), {
 downloadPdf(pdf, 'receipt.pdf');
 ```
 
+npm を使わない場合は CDN の URL をそのまま `import` できる（`dist/` は依存ゼロの単一 ESM）。バージョンは必ず固定する。
+
+```html
+<script type="module">
+  import { registerFont, htmlToPdf, downloadPdf }
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+</script>
+```
+
+グローバル変数を配るビルド（IIFE / UMD）は無い。`type="module"` でない普通のスクリプトから使いたいときは、`import * as ReceiptHtmlToPdf` して `window` に載せる。モジュールスクリプトは `defer` 相当で後から実行されるので、読み込み完了をイベントで知らせるかボタンを `disabled` にしておくこと。動く一式は `examples/cdn.html`。
+
 `htmlToPdf` は既定で `Blob` を返す。`output: 'uint8array'` でバイト列、`'dataurl'` で data URL。サーバーへ送るなら `Blob` のまま `FormData` に入れればよい。
 
 ## フォント: ここが一番詰まる
@@ -118,6 +129,7 @@ footer: '<div style="text-align:center;font-size:8pt">{{pageNumber}} / {{totalPa
 - **Web Components**: シャドウ DOM に対応している。ホスト要素をそのまま渡してよく、`<slot>` の割り当て・`:host` / `::slotted()`・`adoptedStyleSheets`（Lit の `static styles`）・`:defined` はすべて引き継がれる。シャドウルート内の要素（`renderRoot.querySelector()`）を渡した場合も、そのツリーのスタイルは既定の `stylesheets: 'inherit'` で拾われる。
 - ただし **`closed` なシャドウルートは中身が出ない**（外から参照できないため）。`Element.getHTML()` が無い古いブラウザでも同様で、その場合は警告が出る。
 - iframe 側ではカスタム要素はアップグレードされない。`connectedCallback` で DOM を組む要素は、`customElements.whenDefined()` と `document.fonts.ready` を待ってから変換する。
+- **幅は本文領域に合わせる**。A4・余白 15mm なら 180mm ちょうど。固定幅に `padding` / `border` を足すときは `box-sizing: border-box` を付けないと右端が切れる（`other` の警告が出る）。
 - HTML 文字列も渡せる。その場合 `stylesheets` を明示するのが確実。
 - `display: none` の要素は子孫ごと出力されない（場所も取らない）。渡したルート要素自身が `display: none` だと空の PDF になる。`visibility: hidden` は描かれないが場所は残るので、PDF 上は空白になる。
 - **画面に出さずに PDF にだけ載せたい**ときは `display: none` ではなく、画面外へ逃がす（`position: absolute; left: -10000px`）か、`@media print` に書いて `mediaPrint: true` で変換する。
@@ -135,4 +147,5 @@ footer: '<div style="text-align:center;font-size:8pt">{{pageNumber}} / {{totalPa
 - `CFF outlines are not supported` → OTF ではなく静的 TTF を渡す
 - 文字が □ になる → そのフォントにグリフが無い（`missing-glyph` 警告に該当文字が出る）
 - 文字がずれる → `@font-face` と `registerFont` のファイルが違う
+- **右端が切れる** → 内容が本文領域より横に広い（`other` の警告が出る）。A4・余白 15mm なら本文領域は 180mm ちょうど。`width: 180mm` に `padding` / `border` を足すなら `box-sizing: border-box` を付ける
 - 何も描かれない → 要素が `display:none`、または Shadow DOM でスタイルが届いていない
