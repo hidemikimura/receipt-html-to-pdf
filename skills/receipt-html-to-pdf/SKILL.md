@@ -115,8 +115,12 @@ footer: '<div style="text-align:center;font-size:8pt">{{pageNumber}} / {{totalPa
 
 - 要素は **DOM 上にあり、スタイルとフォントが適用済み**であること。`document.fonts.ready` を待ってから呼ぶと確実。
 - 要素を渡すと、親文書の `<html>` / `<body>` の属性（class・lang・data-*）も内部 iframe に写される。`body.reissue .watermark { display: block }` のような祖先依存のセレクタがそのまま効く。
-- **Shadow DOM の中の要素を渡す場合は注意**。親文書のスタイルシートは継承されないので、`stylesheets: [cssText]` で CSS を明示的に渡す（Lit などで必要）。
+- **Web Components**: light DOM のカスタム要素はホスト要素をそのまま渡してよい。**シャドウ DOM のホスト要素を渡すと中身が出ない**（`outerHTML` にシャドウルートが含まれず、走査も `shadowRoot` を辿らない）。`renderRoot.querySelector('.receipt')` のようにシャドウルート内の要素を渡し、親文書のスタイルは継承されないので `stylesheets: [cssText]` で CSS を明示する（Lit などで必要。`examples/lit.js` 参照）。`<slot>` の割り当ても解決しない。
+- iframe 側ではカスタム要素の定義が読み込まれずアップグレードされないので、`:defined` はマッチしない（`my-el:defined { display: block }` は効かず既定の `display: inline` で組まれる）。`adoptedStyleSheets` と `sheet.insertRule()` で足したルールも `stylesheets: 'inherit'` では拾えない。`el.style.xxx` は `style` 属性として直列化されるので反映される。
+- `connectedCallback` で DOM を組む要素は、`customElements.whenDefined()` と `document.fonts.ready` を待ってから変換する。
 - HTML 文字列も渡せる。その場合 `stylesheets` を明示するのが確実。
+- `display: none` の要素は子孫ごと出力されない（場所も取らない）。渡したルート要素自身が `display: none` だと空の PDF になる。`visibility: hidden` は描かれないが場所は残るので、PDF 上は空白になる。
+- **画面に出さずに PDF にだけ載せたい**ときは `display: none` ではなく、画面外へ逃がす（`position: absolute; left: -10000px`）か、`@media print` に書いて `mediaPrint: true` で変換する。
 - クロスオリジン画像には `crossorigin="anonymous"` と CORS ヘッダーが要る。無いと `image-failed` 警告になり、その画像だけ描かれない。
 
 ## 日本の領収証を作るとき

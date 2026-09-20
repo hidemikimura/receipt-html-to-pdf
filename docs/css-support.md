@@ -18,13 +18,14 @@
 | `font-variant-*` / `font-feature-settings` | ⚠️ | 位置は実測なので合うが、GSUB によるグリフ置換（合字・tabular-nums）は反映されない（標準グリフで描く） |
 | `writing-mode: vertical-*` | ❌ | 警告。縦書きは v1.x |
 | `::before` / `::after` の `content` | ✅ | 引用文字列（`"※ "`、`\203B` エスケープ）のみ。`counter()` / `attr()` / `url()` は警告 |
-| `visibility: hidden` | ✅ | 子孫の `visible` も個別判定 |
 | `opacity` | ✅ | 子孫の色・画像に乗算。グループ透過（重なり部分の合成）ではない |
 
 ## ボックス
 
 | プロパティ | 対応 | 備考 |
 |---|---|---|
+| `display: none` | ✅ | その要素と子孫を走査せず、PDF に出力しない。場所も取らない。変換対象として渡したルート要素自身が `display: none` だと空の PDF になる |
+| `visibility: hidden` / `collapse` | ✅ | その要素自身（背景・ボーダー・テキスト）は描かないが、レイアウト上の場所は残るため PDF では空白になり、ページ分割の判定にも効く。子孫で `visibility: visible` に戻せばその子孫だけ描画する |
 | `background-color` | ✅ | border-box に塗る |
 | `background-image: url()` | ✅ | 単一の `url()` のみ。`background-size`（auto / cover / contain / 長さ / %）、`background-position`、`background-clip`、`background-origin` に対応 |
 | `background-repeat` | ⚠️ | `no-repeat` のみ。`repeat` 系は 1 回だけ描いて警告 |
@@ -38,6 +39,13 @@
 | `clip-path` / `mask` | ❌ | 警告 |
 | `filter` / `backdrop-filter` / `mix-blend-mode` | ❌ | 警告 |
 | `z-index` | ⚠️ | `position` 指定 + 数値 `z-index` の要素を安定ソート。厳密なスタッキングコンテキストの描画順ではない |
+
+画面には出さずに PDF にだけ載せたい要素がある場合、`display: none` では消えてしまうので、画面外へ逃がす（`position: absolute; left: -10000px`）か、`@media print` に書いて `mediaPrint: true` で変換する。
+
+```css
+.pdf-only { display: none; }
+@media print { .pdf-only { display: block; } }
+```
 
 ## 画像
 
@@ -69,6 +77,31 @@
 | `@page` | ❌ | 用紙サイズ・余白は `options.page` で指定 |
 | `@media print` | ✅ | `mediaPrint: true` で `@media print {}` の中身を通常ルールとして適用（`@media screen {}` は除去） |
 | ヘッダー／フッター | ✅ | `options.header` / `options.footer` の HTML テンプレート。`{{pageNumber}}` `{{totalPages}}` |
+
+## Web Components
+
+変換は対象要素の `outerHTML` を非表示 iframe に書き出して計測する方式なので、シャドウ DOM かどうかで扱いが変わる。iframe 側ではカスタム要素の定義が読み込まれないため、要素はアップグレードされない。
+
+| 対象 | 対応 | 備考 |
+|---|---|---|
+| light DOM のカスタム要素 | ✅ | 中身が light DOM にあるので `outerHTML` に含まれ、そのまま変換できる。ホスト要素を直接渡してよい |
+| シャドウ DOM のホスト要素 | ❌ | シャドウルートの中身は `outerHTML` に含まれず、走査も `shadowRoot` を辿らない。ホスト自身の背景・ボーダーと、スロットに入る前の light DOM の子しか出ない |
+| シャドウルート内の要素 | ✅ | `renderRoot.querySelector()` で取った要素を渡す。親文書のスタイルは継承されないので `stylesheets` に CSS を明示する（[`examples/lit.js`](https://github.com/hidemikimura/receipt-html-to-pdf/blob/main/examples/lit.js)） |
+| `<slot>` の割り当て解決 | ❌ | スロットに配られた内容は元の位置のまま扱われる |
+| `:defined` | ❌ | iframe 内では未定義扱いになるためマッチしない。`my-el:defined { display: block }` は効かず、既定の `display: inline` で組まれてレイアウトが変わる |
+| `:host` / `::slotted()` | ❌ | シャドウルートが無いため適用されない |
+| `adoptedStyleSheets` / `sheet.insertRule()` | ❌ | `stylesheets: 'inherit'` は `<style>` の `textContent` と `<link>` しか集めない。該当するなら `stylesheets` に CSS 文字列を渡す |
+| `el.style.xxx = ...` | ✅ | `style` 属性として直列化されるので反映される |
+
+変換対象のサブツリーの**中に**別のカスタム要素がある場合も、シャドウ DOM を使っていればその中身は出ない。PDF にしたい範囲は素の HTML で組んでおく。
+
+`connectedCallback` で DOM を組み立てる要素は、組み上がってから変換する。
+
+```js
+await customElements.whenDefined('my-receipt');
+await document.fonts.ready;
+const pdf = await htmlToPdf(el, { stylesheets: [RECEIPT_CSS] });
+```
 
 ## フォントファイル
 

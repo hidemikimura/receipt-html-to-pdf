@@ -101,6 +101,14 @@ function renderMarkdown(src) {
       out.push(`<h2 id="${id}">${inline(text)}</h2>`);
       continue;
     }
+    if (line.startsWith('```')) {
+      flush();
+      const code = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith('```')) code.push(lines[i++]);
+      out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`);
+      continue;
+    }
     if (line.startsWith('|')) {
       flush();
       const rows = [];
