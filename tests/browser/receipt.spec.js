@@ -268,38 +268,53 @@ test('親文書の body マージンは PDF に持ち込まれない', async ({ 
 
 test('break-after: avoid — 見出しがページ末尾に取り残されない', async ({ page }) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
-  const run = (avoid) =>
-    page.evaluate(async (avoid) => {
-      const lib = await import('/src/index.js');
-      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
-      // 46 行のあとに見出しを置くと、見出しがちょうど 1 ページ目の最後の行になる
-      let html = '<div id="doc">';
-      for (let i = 0; i < 46; i++) html += `<p>本文の行 ${i + 1}</p>`;
-      html += '<h2>見出し</h2>';
-      for (let i = 0; i < 10; i++) html += `<p>続く段落 ${i + 1}</p>`;
-      html += '</div>';
-      const css =
-        '#doc{font-family:"BIZ UDPGothic";font-size:12pt;width:180mm}' +
-        'p{margin:0;line-height:16pt}' +
-        `h2{margin:0;font-size:12pt;line-height:16pt${avoid ? ';break-after:avoid' : ''}}`;
-      const bytes = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
-      return Array.from(bytes);
-    }, avoid);
 
-  // pdf.js はグリフ間の隙間を空白として拾うことがあるので空白を落として比較する
-  const strip = (t) => t.replace(/\s/g, '');
-  const without = (await extractText(await run(false))).pages.map(strip);
-  const withAvoid = (await extractText(await run(true))).pages.map(strip);
+  /**
+   * 見出しの前に置く本文の行数を変えて変換し、見出しと次の段落がそれぞれ何ページ目に載るかを返す。
+   * 1 ページに何行入るかはブラウザの行の高さの丸め方で変わるので、
+   * 「ちょうど末尾に来る行数」を決め打ちにせず、境界の前後を掃いて調べる。
+   */
+  const run = async (/** @type {number} */ rows, /** @type {boolean} */ avoid) => {
+    const bytes = await page.evaluate(
+      async ({ rows, avoid }) => {
+        const lib = await import('/src/index.js');
+        await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+        let html = '<div id="doc">';
+        for (let i = 0; i < rows; i++) html += `<p>本文の行 ${i + 1}</p>`;
+        html += '<h2>見出し</h2>';
+        for (let i = 0; i < 10; i++) html += `<p>続く段落 ${i + 1}</p>`;
+        html += '</div>';
+        const css =
+          '#doc{font-family:"BIZ UDPGothic";font-size:12pt;width:180mm}' +
+          'p{margin:0;line-height:16pt}' +
+          `h2{margin:0;font-size:12pt;line-height:16pt${avoid ? ';break-after:avoid' : ''}}`;
+        const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
+        return Array.from(out);
+      },
+      { rows, avoid },
+    );
+    // pdf.js はグリフ間の隙間を空白として拾うことがあるので空白を落として比較する
+    const pages = (await extractText(bytes)).pages.map((t) => t.replace(/\s/g, ''));
+    return {
+      heading: pages.findIndex((t) => t.includes('見出し')),
+      next: pages.findIndex((t) => t.includes('続く段落1')),
+    };
+  };
 
-  // avoid 無し: 見出しが 1 ページ目の末尾に取り残され、続く段落は 2 ページ目
-  expect(without[0]).toContain('見出し');
-  expect(without[1]).toContain('続く段落1');
+  let separatedWithout = 0;
+  for (let rows = 43; rows <= 50; rows++) {
+    const off = await run(rows, false);
+    const on = await run(rows, true);
+    expect(off.heading, `${rows} 行: 見出しが見つかる`).toBeGreaterThanOrEqual(0);
+    expect(on.heading, `${rows} 行: 見出しが見つかる（avoid あり）`).toBeGreaterThanOrEqual(0);
 
-  // avoid 有り: 見出しは 2 ページ目へ送られ、続く段落と同じページに載る
-  expect(withAvoid[0]).not.toContain('見出し');
-  expect(withAvoid[0]).toContain('本文の行46');
-  expect(withAvoid[1].indexOf('見出し')).toBeGreaterThanOrEqual(0);
-  expect(withAvoid[1].indexOf('見出し')).toBeLessThan(withAvoid[1].indexOf('続く段落1'));
+    // avoid を付けたら、見出しと次の段落は必ず同じページに載る
+    expect(on.heading, `${rows} 行: avoid ありなら見出しと次の段落が同じページ`).toBe(on.next);
+    if (off.heading !== off.next) separatedWithout++;
+  }
+
+  // avoid 無しでは、どこかの行数で必ず離れてしまう（= avoid が実際に効いている状況を通っている）
+  expect(separatedWithout, 'avoid 無しで見出しが取り残される行数が少なくとも 1 つある').toBeGreaterThan(0);
 });
 
 test('linear-gradient をベクターで描き、ブラウザ描画と一致する', async ({ page }, testInfo) => {
