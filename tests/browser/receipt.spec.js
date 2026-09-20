@@ -5,6 +5,13 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { serve, convertOnPage, extractText, extractLinks, missingStrings, normalize, hasPdftoppm, pixelDiff, readPixels, root } from './helpers.mjs';
 
+/**
+ * 計測用 iframe に渡すフォント宣言。
+ * `stylesheets` を明示するときはこれを必ず先頭に足す。渡さないと iframe だけ代替フォントで
+ * 計測され、ブラウザごとに行の位置が変わってテストが不安定になる（docs/design.md 20 章）。
+ */
+const FONT_FACE = '@font-face{font-family:"BIZ UDPGothic";src:url("/fonts/BIZUDPGothic-Regular.ttf")}';
+
 /** @type {{name: string, variant: string|null}[]} */
 const CASES = [
   { name: 'receipt-invoice', variant: null },
@@ -182,7 +189,7 @@ test('シャドウ DOM のホスト要素をそのまま変換できる（スロ
 
 test('light DOM のカスタム要素と :defined がそのまま効く', async ({ page }) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
-  const bytes = await page.evaluate(async () => {
+  const bytes = await page.evaluate(async (FONT_FACE) => {
     const lib = await import('/src/index.js');
     await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
     customElements.define('light-card', class extends HTMLElement {});
@@ -190,10 +197,10 @@ test('light DOM のカスタム要素と :defined がそのまま効く', async 
     host.innerHTML = '<span>light DOM の中身</span>';
     document.body.appendChild(host);
     await document.fonts.ready;
-    const css = 'light-card{display:none} light-card:defined{display:block;width:300px;font-family:"BIZ UDPGothic";font-size:14px}';
+    const css = FONT_FACE + 'light-card{display:none} light-card:defined{display:block;width:300px;font-family:"BIZ UDPGothic";font-size:14px}';
     const out = await lib.htmlToPdf(host, { stylesheets: [css], output: 'uint8array' });
     return Array.from(out);
-  });
+  }, FONT_FACE);
   const { pages } = await extractText(bytes);
   // :defined が効かないと display:none のままで何も出ない
   expect(pages.join('\n').replace(/\s/g, '')).toContain('lightDOMの中身');
@@ -222,13 +229,13 @@ test('シャドウルート内の要素を渡すと、そのツリーのスタ�
 
 test('本文領域より横に広い内容は警告が出る', async ({ page }) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
-  const { tooWide, justFits } = await page.evaluate(async () => {
+  const { tooWide, justFits } = await page.evaluate(async (FONT_FACE) => {
     const lib = await import('/src/index.js');
     await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
     const run = async (css) => {
       const out = [];
       await lib.htmlToPdf(`<div id="r" style="${css}">はみ出しの確認</div>`, {
-        stylesheets: ['#r{font-family:"BIZ UDPGothic";font-size:12px}'],
+        stylesheets: [FONT_FACE + '#r{font-family:"BIZ UDPGothic";font-size:12px}'],
         page: { size: 'A4', margin: '15mm' },
         output: 'uint8array',
         onWarning: (w) => out.push(`${w.code}: ${w.message}`),
@@ -241,107 +248,77 @@ test('本文領域より横に広い内容は警告が出る', async ({ page }) 
       // box-sizing: border-box なら 180mm ちょうどで収まる
       justFits: await run('width:180mm;padding:16px;border:1px solid #000;box-sizing:border-box'),
     };
-  });
+  }, FONT_FACE);
   expect(tooWide.join('\n')).toMatch(/wider than the page content area/);
   expect(justFits).toEqual([]);
 });
 
 test('親文書の body マージンは PDF に持ち込まれない', async ({ page }) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
-  const warnings = await page.evaluate(async () => {
+  const warnings = await page.evaluate(async (FONT_FACE) => {
     const lib = await import('/src/index.js');
     await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
     // ページ側が body にマージンを持っていても、用紙の余白は options.page.margin だけで決まる
     document.body.style.margin = '40px';
     const out = [];
     await lib.htmlToPdf('<div id="r">左端の位置を見る</div>', {
-      stylesheets: ['#r{font-family:"BIZ UDPGothic";font-size:12px;width:180mm}', 'body{margin:40px}'],
+      stylesheets: [FONT_FACE + '#r{font-family:"BIZ UDPGothic";font-size:12px;width:180mm}', 'body{margin:40px}'],
       page: { size: 'A4', margin: '15mm' },
       output: 'uint8array',
       onWarning: (w) => out.push(`${w.code}: ${w.message}`),
     });
     return out;
-  });
+  }, FONT_FACE);
   // body マージンが効いていると 180mm + 80px で本文領域をはみ出し、はみ出し警告が出る
   expect(warnings).toEqual([]);
 });
 
-test('break-after: avoid — 見出しがページ末尾に取り残されない', async ({ page }, testInfo) => {
+test('break-after: avoid — 見出しがページ末尾に取り残されない', async ({ page }) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
 
-  const CSS =
-    '#doc{font-family:"BIZ UDPGothic";font-size:12pt;width:180mm}' +
-    'p{margin:0;line-height:16pt}' +
-    'h2{margin:0;font-size:12pt;line-height:16pt}';
+  // 行数や行の高さに頼らず、pt の実寸だけで境界の位置を決める。
+  // A4・余白 15mm の本文領域は 756.85pt。詰め物 700pt + 見出し 40pt = 740pt までが 1 ページ目に入り、
+  // 続く段落（740〜780pt）が境界 756.85pt を跨ぐので、境界は見出しと段落の間へ繰り上がる。
+  const run = (/** @type {boolean} */ avoid) =>
+    page.evaluate(async (avoid) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const html =
+        '<div id="doc"><div class="pad">詰め物</div><h2>見出し</h2>' +
+        '<p class="row">続く段落 1</p><p class="row">続く段落 2</p></div>';
+      const css =
+        '@font-face{font-family:"BIZ UDPGothic";src:url("/fonts/BIZUDPGothic-Regular.ttf")}' +
+        '#doc{font-family:"BIZ UDPGothic";font-size:12pt;width:180mm}' +
+        '.pad{margin:0;height:700pt;line-height:20pt}' +
+        `h2{margin:0;font-size:12pt;height:40pt;line-height:40pt${avoid ? ';break-after:avoid' : ''}}` +
+        '.row{margin:0;height:40pt;line-height:40pt}';
+      const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
+      return Array.from(out);
+    }, avoid);
 
-  // 1 ページに入る行数はブラウザの行の高さの丸め方で変わるので、ブラウザ自身に測らせる。
-  // 見出しが 1 ページ目の最後の行になるのは「本文が (入る行数 - 1) 行」のとき。
-  const boundaryRows = await page.evaluate(async (CSS) => {
-    await document.fonts.ready;
-    const probe = document.createElement('div');
-    probe.id = 'doc';
-    probe.style.cssText = 'position:absolute;left:-99999px;top:0';
-    probe.innerHTML = `<style>${CSS}</style><p>行</p>`;
-    document.body.appendChild(probe);
-    const lineH = /** @type {HTMLElement} */ (probe.querySelector('p')).getBoundingClientRect().height;
-    probe.remove();
-    // A4 の高さ 841.89pt から上下余白 15mm（42.52pt）を引いた本文領域を px にする
-    const contentPx = (841.89 - 2 * 42.52) / 0.75;
-    return Math.floor(contentPx / lineH) - 1;
-  }, CSS);
-  expect(boundaryRows, '1 ページに入る行数が測れる').toBeGreaterThan(10);
-  testInfo.annotations.push({ type: 'boundary', description: `見出しが 1 ページ目の最後に来る本文行数 = ${boundaryRows}` });
-
-  /**
-   * 見出しの前に置く本文の行数を変えて変換し、見出しと次の段落が何ページ目に載るかを返す。
-   * @param {number} rows @param {boolean} avoid
-   */
-  const run = async (rows, avoid) => {
-    const bytes = await page.evaluate(
-      async ({ rows, avoid, CSS }) => {
-        const lib = await import('/src/index.js');
-        await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
-        let html = '<div id="doc">';
-        for (let i = 0; i < rows; i++) html += `<p>本文の行 ${i + 1}</p>`;
-        html += '<h2>見出し</h2>';
-        for (let i = 0; i < 10; i++) html += `<p>続く段落 ${i + 1}</p>`;
-        html += '</div>';
-        const css = avoid ? `${CSS}h2{break-after:avoid}` : CSS;
-        const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
-        return Array.from(out);
-      },
-      { rows, avoid, CSS },
-    );
+  /** @param {number[]} bytes */
+  const pagesOf = async (bytes) => {
     // pdf.js はグリフ間の隙間を空白として拾うことがあるので空白を落として比較する
     const pages = (await extractText(bytes)).pages.map((t) => t.replace(/\s/g, ''));
-    return {
-      heading: pages.findIndex((t) => t.includes('見出し')),
-      next: pages.findIndex((t) => t.includes('続く段落1')),
-    };
+    return { heading: pages.findIndex((t) => t.includes('見出し')), next: pages.findIndex((t) => t.includes('続く段落1')) };
   };
 
-  // 測った境界の前後を掃く（分割位置の丸めで数行ずれても拾えるように）
-  let separatedWithout = 0;
-  for (let rows = boundaryRows - 3; rows <= boundaryRows + 3; rows++) {
-    const off = await run(rows, false);
-    const on = await run(rows, true);
-    expect(off.heading, `${rows} 行: 見出しが見つかる`).toBeGreaterThanOrEqual(0);
-    expect(on.heading, `${rows} 行: 見出しが見つかる（avoid あり）`).toBeGreaterThanOrEqual(0);
+  const off = await pagesOf(await run(false));
+  const on = await pagesOf(await run(true));
 
-    // avoid を付けたら、見出しと次の段落は必ず同じページに載る
-    expect(on.heading, `${rows} 行: avoid ありなら見出しと次の段落が同じページ`).toBe(on.next);
-    testInfo.annotations.push({ type: 'rows', description: `${rows} 行: avoid なし 見出し=p${off.heading + 1}/次=p${off.next + 1}、avoid あり 見出し=p${on.heading + 1}/次=p${on.next + 1}` });
-    if (off.heading !== off.next) separatedWithout++;
-  }
+  // avoid 無し: 見出しは 1 ページ目の末尾に取り残され、続く段落は次のページ
+  expect(off.heading, '見出しが見つかる').toBe(0);
+  expect(off.next, 'avoid 無しでは続く段落が次のページに行く').toBe(1);
 
-  // avoid 無しでは境界付近で必ず離れてしまう（= avoid が効く状況を実際に通っている）
-  expect(separatedWithout, `avoid 無しで見出しが取り残される行数がある（境界 ${boundaryRows} 行の前後を確認）`).toBeGreaterThan(0);
+  // avoid 有り: 見出しごと次のページへ送られ、続く段落と同じページに載る
+  expect(on.heading, 'avoid ありなら見出しと続く段落が同じページ').toBe(on.next);
+  expect(on.heading, 'avoid ありでは見出しが 2 ページ目へ送られる').toBe(1);
 });
 
 test('linear-gradient をベクターで描き、ブラウザ描画と一致する', async ({ page }, testInfo) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
   const HTML = `<div id="g"><div class="a">to right</div><div class="b">45deg 3 色</div><div class="c">透明から黒へ</div><div class="d">角丸</div></div>`;
-  const CSS = `#g{font-family:"BIZ UDPGothic";font-size:14px;width:400px;background:#fff}
+  const CSS = `${FONT_FACE}#g{font-family:"BIZ UDPGothic";font-size:14px;width:400px;background:#fff}
     #g>div{height:60px;margin-bottom:10px;padding:8px;color:#fff;box-sizing:border-box}
     .a{background-image:linear-gradient(to right, rgb(255,0,0), rgb(0,0,255))}
     .b{background-image:linear-gradient(45deg, rgb(255,0,0) 0%, rgb(255,255,0) 30%, rgb(0,0,255) 100%)}
@@ -403,7 +380,7 @@ test('インライン SVG をベクターで描き、ブラウザ描画と一致
         <path d="M0 0 h10 v10 h-10 z M2 2 h6 v6 h-6 z" fill="#000" fill-rule="evenodd" transform="translate(200,60) scale(2)"/>
       </g>
     </svg>`;
-  const CSS = '#d{font-family:"BIZ UDPGothic";width:400px;background:#fff;padding:10px;box-sizing:border-box}';
+  const CSS = FONT_FACE + '#d{font-family:"BIZ UDPGothic";width:400px;background:#fff;padding:10px;box-sizing:border-box}';
 
   const { bytes, warnings } = await page.evaluate(
     async ({ SVG, CSS }) => {
@@ -522,7 +499,7 @@ test('background-repeat をタイル描画で再現する', async ({ page }, tes
     g.fillRect(0, 0, 8, 8);
     return c.toDataURL('image/png');
   });
-  const CSS = `#g{width:400px;background:#fff}
+  const CSS = `${FONT_FACE}#g{width:400px;background:#fff}
     #g>div{height:60px;margin-bottom:8px;box-sizing:border-box;
       background-image:url("${src}");background-size:28px 28px}
     .r{background-repeat:repeat}
@@ -607,7 +584,7 @@ test('タイル数が上限を超えたら警告して 1 枚だけ描く', async
 
 test('onProgress が変換の進み具合を順番に知らせる', async ({ page }) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
-  const events = await page.evaluate(async () => {
+  const events = await page.evaluate(async (FONT_FACE) => {
     const lib = await import('/src/index.js');
     await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
     let html = '<div id="d">';
@@ -615,13 +592,13 @@ test('onProgress が変換の進み具合を順番に知らせる', async ({ pag
     html += '</div>';
     const out = [];
     await lib.htmlToPdf(html, {
-      stylesheets: ['#d{font-family:"BIZ UDPGothic";font-size:11pt;width:180mm}p{margin:0;line-height:16pt}'],
+      stylesheets: [FONT_FACE + '#d{font-family:"BIZ UDPGothic";font-size:11pt;width:180mm}p{margin:0;line-height:16pt}'],
       page: { size: 'A4', margin: '15mm' },
       output: 'uint8array',
       onProgress: (p) => out.push(p),
     });
     return out;
-  });
+  }, FONT_FACE);
 
   const phases = events.map((e) => e.phase);
   expect(phases[0]).toBe('render');
