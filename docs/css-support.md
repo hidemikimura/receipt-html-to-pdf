@@ -16,7 +16,7 @@
 | `text-transform` | ✅ | 文字数が変わらない変換のみ（`ß → SS` は無視） |
 | `text-shadow` | ❌ | 警告 |
 | `font-variant-numeric` / `-caps` / `-east-asian` / `font-feature-settings` | ⚠️ | GSUB の**単一置換**（1 文字 → 1 文字）を再現する。`zero`（スラッシュ付きゼロ）、`jp78` / `jp83` / `jp90` / `jp04` / `nlck` / `trad` / `smpl`（異体字）、`fwid` / `hwid`、`smcp` など。**合字（`liga` / `dlig`）は未対応**（グリフ数が変わるため）。既定で有効な機能（`ccmp` / `liga` / `calt`）は適用しない |
-| `writing-mode: vertical-*` | ❌ | 警告。縦書きは v1.x |
+| `writing-mode: vertical-*` | ❌ | 警告。縦書きは対応予定なし（横書きの帳票が実務上の標準のため。必要になれば改めて検討） |
 | `::before` / `::after` の `content` | ✅ | 引用文字列（`"※ "`、`\203B` エスケープ）のみ。`counter()` / `attr()` / `url()` は警告 |
 | `opacity` | ✅ | 子孫の色・画像に乗算。グループ透過（重なり部分の合成）ではない |
 
