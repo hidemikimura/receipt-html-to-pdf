@@ -1,0 +1,70 @@
+name: Deploy docs site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'src/**'
+      - 'docs/css-support.md'
+      - 'scripts/build-site.mjs'
+      - 'scripts/demo-charset.txt'
+      - 'package.json'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: フォントのサブセット化に fonttools を使う
+        run: pip install fonttools
+      - name: 参照フォントを取得する
+        run: npm run fonts
+      - name: ライブラリを minify する
+        run: npm run build -- --check
+      - name: サイトを組み立てる（lib・デモ用フォント・css.html）
+        run: npm run site
+      - name: 生成物がそろっているか確認する
+        run: |
+          set -e
+          for f in site/index.html site/demo.html site/api.html site/css.html \
+                   site/assets/site.css site/assets/demo.js \
+                   site/assets/lib/receipt-html-to-pdf.min.js site/assets/lib/meta.js \
+                   site/assets/fonts/BIZUDPGothic-Regular-subset.ttf \
+                   site/assets/fonts/BIZUDPGothic-Bold-subset.ttf; do
+            test -s "$f" || { echo "missing or empty: $f"; exit 1; }
+          done
+          echo "site/ の合計: $(du -sh site | cut -f1)"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

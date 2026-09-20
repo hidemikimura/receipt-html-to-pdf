@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>デモ — Receipt html to pdf</title>
+<meta name="description" content="ブラウザ上で領収証の HTML を編集し、その場でテキスト選択可能な PDF を生成して確認できます。">
+<link rel="stylesheet" href="./assets/site.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🧾</text></svg>">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="./">Receipt html to pdf<span class="ver" data-version>v0.1.0</span></a>
+  <nav class="site-nav">
+    <a href="./">はじめに</a>
+    <a href="./demo.html" aria-current="page">デモ</a>
+    <a href="./api.html">API</a>
+    <a href="./css.html">対応 CSS</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="ext" href="https://github.com/hidemikimura/receipt-html-to-pdf">GitHub</a>
+  <a class="ext" href="https://www.npmjs.com/package/@hidemikimura/receipt-html-to-pdf">npm</a>
+</header>
+
+<main class="wide">
+  <h1>デモ</h1>
+  <p class="lead">左の HTML を編集すると右のプレビューが更新されます。「PDF を生成」を押すと、このページの JavaScript がその場で PDF を作ります。サーバーには何も送っていません。</p>
+
+  <div class="controls">
+    <label class="field">用紙
+      <select id="opt-size">
+        <option value="A4">A4</option>
+        <option value="A5">A5</option>
+        <option value="receipt">レシート幅（80mm）</option>
+      </select>
+    </label>
+    <label class="field">余白
+      <select id="opt-margin">
+        <option value="15mm" selected>15mm</option>
+        <option value="10mm">10mm</option>
+        <option value="5mm">5mm</option>
+      </select>
+    </label>
+    <label class="field check"><input type="checkbox" id="opt-footer"> ページ番号のフッターを付ける</label>
+    <span class="spacer" style="flex:1"></span>
+    <button class="btn primary" id="generate" disabled>PDF を生成</button>
+    <a class="btn" id="download" hidden download="receipt.pdf">ダウンロード</a>
+    <button class="btn" id="reset">最初の例に戻す</button>
+  </div>
+
+  <p id="status">フォントを読み込んでいます…</p>
+  <div class="progress" id="progress-wrap"><div id="progress"></div></div>
+  <ul id="warnings"></ul>
+
+  <div class="demo-grid" style="margin-top:20px">
+    <div class="panel">
+      <header>HTML（この内容がそのまま変換されます）</header>
+      <div class="body"><textarea id="editor" spellcheck="false" aria-label="変換する HTML"></textarea></div>
+    </div>
+    <div class="panel">
+      <header>ブラウザでの表示<span class="spacer"></span><span class="muted" id="preview-note">プレビュー</span></header>
+      <div class="body"><iframe id="preview" title="プレビュー"></iframe></div>
+    </div>
+  </div>
+
+  <div class="panel" id="result-panel" style="margin-top:20px" hidden>
+    <header>生成された PDF<span class="spacer"></span><span class="muted">文字を選択・検索できます</span></header>
+    <div class="body"><iframe id="result" title="生成された PDF" style="height:640px"></iframe></div>
+  </div>
+
+  <h2>この例で使っているもの</h2>
+  <ul>
+    <li><strong>適格請求書の記載事項</strong> — 登録番号、取引年月日、軽減税率対象の <code>※</code>、税率ごとの対価と消費税額、宛名。</li>
+    <li><strong>端数処理</strong> — 税率ごとに税抜合計を出してから 1 回だけ切り捨てています（明細行ごとに丸めてはいけません）。</li>
+    <li><strong>テーブル</strong> — <code>border-collapse: collapse</code> の罫線がそのまま出ます。</li>
+    <li><strong>フォント</strong> — BIZ UDPGothic を JIS 第 1 水準まで絞ったサブセットを配信しています。含まれない漢字を入力すると <code>missing-glyph</code> の警告が出て □ になります（本番では全字種のフォントを配信してください）。</li>
+  </ul>
+
+  <div class="note">
+    <p>生成された PDF を開いて、<strong>文字をドラッグで選択してコピー</strong>してみてください。画像化していないので、そのままテキストとして取り出せます。拡大しても輪郭は崩れません。</p>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <a href="https://github.com/hidemikimura/receipt-html-to-pdf">GitHub</a> ·
+  <a href="https://www.npmjs.com/package/@hidemikimura/receipt-html-to-pdf">npm</a> ·
+  <a href="./api.html">API リファレンス</a>
+</footer>
+
+<template id="default-source"><style>
+  @font-face {
+    font-family: "BIZ UDPGothic";
+    font-weight: 400;
+    src: url("./assets/fonts/BIZUDPGothic-Regular-subset.ttf");
+  }
+  @font-face {
+    font-family: "BIZ UDPGothic";
+    font-weight: 700;
+    src: url("./assets/fonts/BIZUDPGothic-Bold-subset.ttf");
+  }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: "BIZ UDPGothic", sans-serif; font-size: 10pt; line-height: 1.6; color: #222; }
+  h1 { text-align: center; font-size: 20pt; letter-spacing: 0.5em; margin: 0 0 6mm; padding-bottom: 2mm; border-bottom: 2px solid #222; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .to { font-size: 13pt; font-weight: 700; border-bottom: 1px solid #222; padding: 0 2mm 1mm; min-width: 70mm; }
+  .meta { text-align: right; font-size: 9.5pt; }
+  .amount { display: flex; justify-content: center; align-items: baseline; gap: 6mm; margin: 5mm 0; padding: 3mm; border: 1px solid #222; border-radius: 6px; background: #f5f5f5; }
+  .amount b { font-size: 22pt; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-top: 4mm; }
+  th, td { border: 1px solid #222; padding: 1.5mm 2mm; }
+  th { background: #eaeaea; text-align: center; }
+  td.num { text-align: right; }
+  .note { font-size: 8.5pt; color: #555; margin: 2mm 0 5mm; }
+  .summary { display: flex; gap: 6mm; }
+  .issuer { margin-top: 6mm; text-align: right; line-height: 1.7; }
+  .issuer .name { font-size: 12pt; font-weight: 700; }
+</style>
+<article>
+  <h1>領収証</h1>
+
+  <div class="head">
+    <div class="to">株式会社テスト商事　御中</div>
+    <div class="meta">No. R-2026-000123<br>発行日 2026年9月20日</div>
+  </div>
+
+  <div class="amount"><span>金額</span><b>￥41,936-</b><span>（税込）</span></div>
+
+  <p>但し、下記の通り商品代として、上記金額を正に領収いたしました。</p>
+
+  <table>
+    <thead>
+      <tr><th>品名</th><th>数量</th><th>単価</th><th>金額</th><th>税率</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Web サイト制作サービス</td><td class="num">1</td><td class="num">30,000</td><td class="num">30,000</td><td class="num">10%</td></tr>
+      <tr><td>USB メモリ 64GB</td><td class="num">2</td><td class="num">2,000</td><td class="num">4,000</td><td class="num">10%</td></tr>
+      <tr><td>コーヒー豆 200g ※</td><td class="num">2</td><td class="num">1,500</td><td class="num">3,000</td><td class="num">8%</td></tr>
+      <tr><td>緑茶ティーバッグ ※</td><td class="num">1</td><td class="num">1,200</td><td class="num">1,200</td><td class="num">8%</td></tr>
+    </tbody>
+  </table>
+  <p class="note">※ は軽減税率（8%）対象品目です。</p>
+
+  <div class="summary">
+    <table>
+      <thead><tr><th>税率区分</th><th>税抜金額</th><th>消費税額</th></tr></thead>
+      <tbody>
+        <tr><td>10% 対象</td><td class="num">34,000</td><td class="num">3,400</td></tr>
+        <tr><td>8% 対象</td><td class="num">4,200</td><td class="num">336</td></tr>
+      </tbody>
+    </table>
+    <table>
+      <tbody>
+        <tr><th>小計（税抜）</th><td class="num">38,200</td></tr>
+        <tr><th>消費税合計</th><td class="num">3,736</td></tr>
+        <tr><th>合計（税込）</th><td class="num">￥41,936</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="issuer">
+    <div class="name">株式会社サンプル商店</div>
+    <div>登録番号　T1234567890123</div>
+    <div>〒100-0001　東京都千代田区千代田1-1-1</div>
+    <div>TEL 03-1234-5678</div>
+  </div>
+
+  <p class="note">本書は電子的に交付された領収証であり、収入印紙は不要です。</p>
+</article></template>
+
+<script type="module" src="./assets/demo.js"></script>
+</body>
+</html>

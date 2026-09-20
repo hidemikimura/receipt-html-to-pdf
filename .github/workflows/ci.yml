@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: typecheck / unit / size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run fonts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build -- --check
+
+  browser:
+    name: browser (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run fonts
+      - name: Install poppler (pdftoppm) and qpdf
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils qpdf
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npx playwright test
+        env:
+          BROWSERS: ${{ matrix.browser }}
+          CI: 'true'
+      - name: Validate generated PDFs with qpdf
+        if: always()
+        run: |
+          shopt -s globstar nullglob
+          status=0
+          for f in test-results/**/*.pdf; do
+            if qpdf --check "$f" > /tmp/qpdf.log 2>&1; then echo "ok   $f"; else echo "FAIL $f"; cat /tmp/qpdf.log; status=1; fi
+          done
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-${{ matrix.browser }}
+          path: |
+            playwright-report
+            test-results
+          retention-days: 14

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API リファレンス — Receipt html to pdf</title>
+<meta name="description" content="registerFont / htmlToPdf / downloadPdf と ConvertOptions の全オプション。">
+<link rel="stylesheet" href="./assets/site.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🧾</text></svg>">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="./">Receipt html to pdf<span class="ver" data-version>v0.1.0</span></a>
+  <nav class="site-nav">
+    <a href="./">はじめに</a>
+    <a href="./demo.html">デモ</a>
+    <a href="./api.html" aria-current="page">API</a>
+    <a href="./css.html">対応 CSS</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="ext" href="https://github.com/hidemikimura/receipt-html-to-pdf">GitHub</a>
+  <a class="ext" href="https://www.npmjs.com/package/@hidemikimura/receipt-html-to-pdf">npm</a>
+</header>
+
+<main>
+  <h1>API リファレンス</h1>
+  <p class="lead">公開されているのは 4 つの関数と 2 つの定数だけです。型定義は <code>types/index.d.ts</code> に入っており、JSDoc から生成しています。</p>
+
+  <div class="toc">
+    <strong>目次</strong>
+    <ul>
+      <li><a href="#import">読み込み</a></li>
+      <li><a href="#registerfont">registerFont()</a></li>
+      <li><a href="#htmltopdf">htmlToPdf()</a></li>
+      <li><a href="#options">ConvertOptions</a></li>
+      <li><a href="#page">ページ設定</a></li>
+      <li><a href="#headerfooter">ヘッダーとフッター</a></li>
+      <li><a href="#warning">警告の種類</a></li>
+      <li><a href="#others">その他の関数</a></li>
+      <li><a href="#recipes">よくある使い方</a></li>
+    </ul>
+  </div>
+
+  <h2 id="import">読み込み</h2>
+  <p>ESM のみです。ソースをそのまま使うか、minify 済みの単一ファイルを使うかを選べます。</p>
+  <pre><code>// ソース（バンドラーが tree-shaking できる）
+import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf';
+
+// minify 済みの単一ファイル（gzip 19KB）
+import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf/min';</code></pre>
+  <p>CDN から直接読み込むこともできます。</p>
+  <pre><code>&lt;script type="module"&gt;
+  import { registerFont, htmlToPdf } from 'https://esm.sh/@hidemikimura/receipt-html-to-pdf';
+&lt;/script&gt;</code></pre>
+
+  <h2 id="registerfont">registerFont(font)</h2>
+  <p>PDF に埋め込むフォントを登録します。<strong>アプリの起動時に一度だけ</strong>呼べば、以降の変換で再利用されます（パース結果はモジュール内にキャッシュされます）。同じ family / weight / style を再登録すると上書きします。</p>
+  <pre><code>await registerFont({
+  family: 'BIZ UDPGothic',   // CSS の font-family と一致させる
+  weight: 400,               // 省略時 400
+  style: 'normal',           // 'normal' | 'italic'、省略時 'normal'
+  src: '/fonts/BIZUDPGothic-Regular.ttf',  // URL / ArrayBuffer / Uint8Array
+});</code></pre>
+  <div class="note warn">
+    <p><strong>HTML の <code>@font-face</code> と同じファイルを渡してください。</strong> ブラウザが文字幅の計測に使うフォントと、PDF に埋め込むグリフが違うと、文字の位置がずれます。</p>
+    <p>使えるのは TrueType（<code>glyf</code> アウトライン）の静的 TTF だけです。CFF の OTF・WOFF・WOFF2・TTC は例外になります。可変フォントはデフォルトインスタンスだけが埋め込まれ、<code>console.warn</code> が出ます。</p>
+  </div>
+
+  <h2 id="htmltopdf">htmlToPdf(input, options?)</h2>
+  <p>HTML を PDF に変換します。<code>input</code> には <strong>DOM 要素</strong>か <strong>HTML 文字列</strong>を渡せます。</p>
+  <pre><code>const pdf = await htmlToPdf(document.getElementById('receipt'), { /* options */ });</code></pre>
+  <p>返り値は既定で <code>Blob</code>。<code>output</code> で <code>Uint8Array</code> や data URL にもできます。</p>
+  <p>要素を渡す場合、その要素は <strong>DOM 上にあり、スタイルとフォントが適用された状態</strong>である必要があります。<code>document.fonts.ready</code> を待ってから呼ぶと確実です。親文書の <code>&lt;html&gt;</code> と <code>&lt;body&gt;</code> の属性（class・lang・data-*）も内部にコピーされるので、<code>body.reissue .watermark</code> のような祖先依存のセレクタもそのまま効きます。</p>
+  <p>フォントが 1 つも登録されていないと <code>htmlToPdf: no fonts registered</code> の例外になります。</p>
+
+  <h2 id="options">ConvertOptions</h2>
+  <table>
+    <thead><tr><th>プロパティ</th><th>型</th><th>既定</th><th>説明</th></tr></thead>
+    <tbody>
+      <tr><td><code>page</code></td><td><code>PageOptions</code></td><td>A4 / 15mm</td><td>用紙サイズ・向き・余白。<a href="#page">下記</a></td></tr>
+      <tr><td><code>header</code></td><td><code>string | null</code></td><td><code>null</code></td><td>各ページ上部に合成する HTML テンプレート</td></tr>
+      <tr><td><code>footer</code></td><td><code>string | null</code></td><td><code>null</code></td><td>各ページ下部に合成する HTML テンプレート</td></tr>
+      <tr><td><code>stylesheets</code></td><td><code>'inherit' | 'none' | string[]</code></td><td><code>'inherit'</code></td><td>親文書の <code>&lt;style&gt;</code> / <code>&lt;link&gt;</code> を継承するか。配列なら URL か CSS 文字列を明示</td></tr>
+      <tr><td><code>mediaPrint</code></td><td><code>boolean</code></td><td><code>false</code></td><td><code>@media print {}</code> の中身を通常ルールとして適用し、<code>@media screen {}</code> を除去する</td></tr>
+      <tr><td><code>fontFallback</code></td><td><code>string[]</code></td><td><code>[]</code></td><td>未登録ファミリーが要求されたときに試す family 名の順序</td></tr>
+      <tr><td><code>metadata</code></td><td><code>PdfMetadata</code></td><td>—</td><td><code>title</code> <code>author</code> <code>subject</code> <code>keywords</code> <code>creator</code> <code>creationDate</code>。日本語可</td></tr>
+      <tr><td><code>compress</code></td><td><code>boolean</code></td><td><code>true</code></td><td><code>CompressionStream</code> が使える環境で FlateDecode を適用する</td></tr>
+      <tr><td><code>baseUrl</code></td><td><code>string</code></td><td>現在の文書</td><td>フォントや画像の相対 URL の基準</td></tr>
+      <tr><td><code>output</code></td><td><code>'blob' | 'uint8array' | 'dataurl'</code></td><td><code>'blob'</code></td><td>返り値の形式</td></tr>
+      <tr><td><code>textMeasure</code></td><td><code>'auto' | 'font' | 'measure'</code></td><td><code>'auto'</code></td><td>グリフ位置の決め方。現在はどれを指定しても実測です</td></tr>
+      <tr><td><code>onWarning</code></td><td><code>(w) =&gt; void</code></td><td>—</td><td>未対応 CSS・欠落グリフ・画像失敗の通知。<strong>必ず配線してください</strong></td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="page">ページ設定</h2>
+  <pre><code>page: {
+  size: 'A4',              // 'A3' 'A4' 'A5' 'B4' 'B5' 'Letter' 'Legal'
+                           // または { width: '80mm', height: '200mm' }
+  orientation: 'portrait', // 'landscape' で横向き
+  margin: '15mm',          // 文字列で四辺共通
+                           // または { top, right, bottom, left }
+}</code></pre>
+  <p>長さは <code>mm</code> <code>cm</code> <code>in</code> <code>pt</code> <code>pc</code> <code>px</code> を受け付けます（単位なしは px）。レシートプリンタ向けに <code>{ width: '80mm', height: '297mm' }</code> のような指定もできます。</p>
+  <p>ページ分割は、テキストの行・<code>&lt;tr&gt;</code>・<code>&lt;thead&gt;</code>・<code>&lt;tfoot&gt;</code>・<code>&lt;img&gt;</code>・<code>break-inside: avoid</code> の要素を跨がない位置まで自動で繰り上がります。強制改ページは <code>break-before: page</code> / <code>break-after: page</code>。表が次ページへ続くときは <code>&lt;thead&gt;</code> が各ページ先頭に、<code>&lt;tfoot&gt;</code> がそのページ最後の行の直下に繰り返されます。</p>
+
+  <h2 id="headerfooter">ヘッダーとフッター</h2>
+  <p>本文とは別の HTML として各ページに合成されます。<code>{{pageNumber}}</code> と <code>{{totalPages}}</code> が置換されます。</p>
+  <pre><code>footer: '&lt;div style="text-align:center;font-size:8pt"&gt;{{pageNumber}} / {{totalPages}}&lt;/div&gt;'</code></pre>
+  <p>高さは 1 ページ目相当の内容で 1 回だけ測り、全ページ共通とみなします。ヘッダー／フッターを付けたぶん本文領域は縮むので、ページ数が変わることがあります。フォントは本文と同じレジストリから引かれるので、テンプレート側でも <code>font-family</code> を指定してください。</p>
+
+  <h2 id="warning">警告の種類</h2>
+  <p><code>onWarning</code> に届くオブジェクトは <code>{ code, message, element?, property?, text? }</code> です。変換は止まりません。</p>
+  <table>
+    <thead><tr><th><code>code</code></th><th>意味</th><th>よくある原因</th></tr></thead>
+    <tbody>
+      <tr><td><code>unsupported-css</code></td><td>指定された CSS を無視した</td><td><code>box-shadow</code>、グラデーション、縦書きなど。<code>property</code> に対象が入る</td></tr>
+      <tr><td><code>missing-glyph</code></td><td>グリフが無く □ で代替した</td><td>丸囲み数字・㈱・㍿ など。<code>text</code> に該当文字が入る</td></tr>
+      <tr><td><code>missing-font</code></td><td>font-family に合うフォントが無く、その文字列を飛ばした</td><td><code>registerFont</code> し忘れ、または <code>fontFallback</code> 未設定</td></tr>
+      <tr><td><code>image-failed</code></td><td>画像を読めず描かなかった</td><td>CORS ヘッダー無しのクロスオリジン画像、404</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="others">その他の関数</h2>
+  <h3>downloadPdf(pdf, filename)</h3>
+  <p>生成した <code>Blob</code> または <code>Uint8Array</code> をブラウザにダウンロードさせます。<code>&lt;a download&gt;</code> を作ってクリックし、object URL を後始末するだけの補助関数です。</p>
+  <h3>listFonts()</h3>
+  <p>登録済みフォントの一覧（<code>family</code> / <code>weight</code> / <code>style</code> / <code>glyphs</code>）を返します。デバッグ用です。</p>
+  <h3>version</h3>
+  <p>ライブラリのバージョン文字列。<code>package.json</code> と一致することをビルド時に検査しています。</p>
+
+  <h2 id="recipes">よくある使い方</h2>
+
+  <h3>サーバーに保存する</h3>
+  <pre><code>const pdf = await htmlToPdf(el, { output: 'blob' });
+const form = new FormData();
+form.append('file', pdf, 'receipt.pdf');
+await fetch('/api/receipts', { method: 'POST', body: form });</code></pre>
+
+  <h3>画面には出さずに PDF だけ作る</h3>
+  <p>要素は DOM 上にある必要がありますが、画面外に置けば見えません。<code>display: none</code> はレイアウトされないため使えません。</p>
+  <pre><code>&lt;div id="receipt" style="position:fixed;left:-10000px;top:0"&gt;…&lt;/div&gt;</code></pre>
+
+  <h3>Shadow DOM の中身を変換する</h3>
+  <p>親文書のスタイルシートは Shadow DOM に継承されません。CSS を明示的に渡してください。</p>
+  <pre><code>const css = `@font-face { font-family:"BIZ UDPGothic"; src:url("/fonts/BIZUDPGothic-Regular.ttf") }
+             .receipt { font-family:"BIZ UDPGothic"; }`;
+const pdf = await htmlToPdf(this.renderRoot.querySelector('.receipt'), {
+  stylesheets: [css],
+});</code></pre>
+
+  <h3>印刷用スタイルをそのまま使う</h3>
+  <p>既に <code>@media print</code> で帳票のスタイルを作ってあるなら、そのまま適用できます。</p>
+  <pre><code>const pdf = await htmlToPdf(el, { mediaPrint: true });</code></pre>
+
+  <h3>フォントを事前に取得して使い回す</h3>
+  <p>URL ではなくバイト列も渡せます。複数の画面で使うなら一度取得して保持しておくと無駄がありません。</p>
+  <pre><code>const bytes = new Uint8Array(await (await fetch('/fonts/x.ttf')).arrayBuffer());
+await registerFont({ family: 'X', src: bytes });</code></pre>
+</main>
+
+<footer class="site-footer">
+  <a href="https://github.com/hidemikimura/receipt-html-to-pdf">GitHub</a> ·
+  <a href="./demo.html">デモ</a> ·
+  <a href="./css.html">対応 CSS 一覧</a>
+</footer>
+
+<script type="module">
+  try {
+    const { meta } = await import('./assets/lib/meta.js');
+    for (const el of document.querySelectorAll('[data-version]')) el.textContent = 'v' + meta.version;
+  } catch {}
+</script>
+</body>
+</html>

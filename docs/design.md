@@ -429,6 +429,16 @@ v1.0 に向けて残っているもの: `overflow: hidden` のクリップ、`tf
 
 v1.x 候補（優先度順の私案）: `break-before/after: avoid`、`background-repeat`、グラデーション、SVG のベクター変換、GSUB（tabular-nums）、縦書き、リンク注釈、ストリーミング出力。
 
+## 17. skill とドキュメントサイト（2026-09-20）
+
+0.1.0 の公開後、AI エージェント向けの skill と人間向けのドキュメントサイトを追加した。
+
+**skill（`skills/receipt-html-to-pdf/`）**: `SKILL.md` の frontmatter に「いつ読むか」を日本語で書き、本体には最初に確認すること（ブラウザ専用・フォントファイルが要る・CSS の適用範囲）、`registerFont` / `htmlToPdf` の使い方、フォント選定の制約、対応 CSS の要点、複数ページ制御、よくあるエラーを置いた。詳細は `references/receipt-format.md`（適格請求書の記載事項 6 項目、税率ごとに 1 回だけ端数処理する規則、電子交付なら印紙不要、`￥41,936-` などの慣習）と `references/troubleshooting.md`（例外／見た目／ページ分割の症状別の表）に分けている。`package.json` の `files` に `skills` を足したので npm パッケージからそのままコピーできる。
+
+**サイト（`site/`）**: 依存ゼロの静的 HTML + CSS + ESM、日本語のみ。`index.html`（何ができるか・他手法との比較・仕組み・クイックスタート）、`demo.html`（ブラウザ内で実際に PDF を生成する）、`api.html`、`css.html` の 4 ページ。`scripts/build-site.mjs` が (1) `dist/` の minify バンドルを `site/assets/lib/` にコピー、(2) `docs/css-support.md` から `css.html` を生成（対応表の単一の出所を保つため）、(3) `pyftsubset` でデモに出る文字だけに絞った BIZ UDPGothic のサブセット（各 800KB 強）を作る。生成物は `.gitignore` に入れ、`.github/workflows/pages.yml` が main への push で組み立てて GitHub Pages に deploy する（Settings → Pages の Source を「GitHub Actions」にする必要がある）。
+
+デモは実際に Chromium で動作を確認した（27.2KB / 74ms、警告なし、pdf.js で全期待文字列を抽出、A5 + フッターで 2 ページとページ番号）。途中で `.btn { display: inline-flex }` が UA の `[hidden] { display: none }` に勝ってしまい、生成前からダウンロードボタンが見えていたので、`site.css` に `[hidden] { display: none !important; }` を足した。
+
 ## 付録 A. 対応予定 CSS プロパティ一覧（v1.0）
 
 **レイアウト系（ブラウザ計算をそのまま使用、追加実装不要）**: `display` 全般、`position`、`float`、`flex-*`、`grid-*`、`margin`、`padding`、`width/height`、`table-*`、`white-space`、`word-break`、`overflow-wrap`、`line-break`、`text-align`、`vertical-align`、`line-height`、`text-indent`

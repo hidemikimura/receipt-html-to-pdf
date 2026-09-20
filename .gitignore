@@ -15,3 +15,9 @@ out/
 # IDE
 .idea/
 .vscode/
+
+# ドキュメントサイトの生成物
+site/assets/lib/
+site/assets/fonts/*.ttf
+site/assets/fonts/STATUS.json
+site/css.html

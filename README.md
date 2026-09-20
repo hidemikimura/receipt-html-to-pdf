@@ -8,6 +8,8 @@
 - レイアウトはブラウザに任せ（非表示 iframe で描画して計測）、描画だけを PDF 命令へ変換
 - 日本語フォントをサブセット化して埋め込み（TrueType `glyf` アウトラインの静的 TTF）
 
+**ドキュメント: https://hidemikimura.github.io/receipt-html-to-pdf/** （[デモ](https://hidemikimura.github.io/receipt-html-to-pdf/demo.html) / [API リファレンス](https://hidemikimura.github.io/receipt-html-to-pdf/api.html) / [対応 CSS 一覧](https://hidemikimura.github.io/receipt-html-to-pdf/css.html)）
+
 > **v0.1.0**（初回公開）— テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・複数ページ（行を跨がない分割、`break-*`、`thead` / `tfoot` の繰り返し、ヘッダー／フッター）に対応。依存ゼロ、minify バンドルは gzip 19KB。
 > Chromium / Firefox / WebKit の 3 ブラウザで Playwright テスト（テキスト抽出・ページ分割・画素差分）に合格。対応 CSS は [docs/css-support.md](docs/css-support.md)、設計と経緯は [docs/design.md](docs/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md)。
 
@@ -93,6 +95,28 @@ CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイ�
 `fixtures/receipt-invoice-long/` — 同じテンプレートで明細を 60 行にした複数ページ検証用。`npm run fixtures` (`scripts/gen-fixture-long.mjs`) で生成する。A4・余白 15mm・フッター付きで 3 ページになり、`thead` が 2 ページ目以降に繰り返される。
 
 紙で交付する場合、税抜 5 万円以上の領収証には収入印紙が必要になる。電子データ（PDF）として交付する場合は印紙税の課税対象外のため、フィクスチャは印紙欄を持たない。
+
+## AI エージェント向け skill
+
+`skills/receipt-html-to-pdf/` に、Claude などのコーディングエージェントがこのライブラリを使うときに読む skill を同梱している。npm パッケージにも含まれるので、インストール済みならそのままコピーできる。
+
+```sh
+mkdir -p .claude/skills
+cp -r node_modules/@hidemikimura/receipt-html-to-pdf/skills/receipt-html-to-pdf .claude/skills/
+```
+
+`SKILL.md` に使い方・フォントの制約・対応 CSS の要点・複数ページ制御をまとめ、`references/receipt-format.md` に適格請求書の記載事項、`references/troubleshooting.md` によくあるエラーと対処を置いている。
+
+## ドキュメントサイト
+
+`site/` が GitHub Pages で公開する静的サイト（依存ゼロ、日本語）。`.github/workflows/pages.yml` が main への push で `npm run site` を実行して deploy する。初回はリポジトリの Settings → Pages で Source を「GitHub Actions」にする必要がある。
+
+```sh
+npm run site        # site/ を組み立てる（dist のコピー、デモ用フォントのサブセット、css.html の生成）
+npm run site:dev    # 組み立てて http://localhost:5174 で表示
+```
+
+`site/css.html` は `docs/css-support.md` から生成し、デモ用のフォントは `pyftsubset`（`pip install fonttools`）でデモに出る文字だけに絞る。どちらも生成物なので git には入れていない。
 
 ## 公開手順（メンテナ向け）
 

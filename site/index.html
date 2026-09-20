@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receipt html to pdf — ブラウザだけで HTML を選択可能な PDF に</title>
+<meta name="description" content="サーバー不要。ブラウザの中だけで HTML/CSS をテキスト選択・検索できるベクター PDF に変換する、依存ゼロの JavaScript ライブラリ。日本の領収証・適格請求書向け。">
+<link rel="stylesheet" href="./assets/site.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🧾</text></svg>">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="./">Receipt html to pdf<span class="ver" data-version>v0.1.0</span></a>
+  <nav class="site-nav">
+    <a href="./" aria-current="page">はじめに</a>
+    <a href="./demo.html">デモ</a>
+    <a href="./api.html">API</a>
+    <a href="./css.html">対応 CSS</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="ext" href="https://github.com/hidemikimura/receipt-html-to-pdf">GitHub</a>
+  <a class="ext" href="https://www.npmjs.com/package/@hidemikimura/receipt-html-to-pdf">npm</a>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>ブラウザだけで、選択できる PDF に。</h1>
+    <p class="tagline">HTML/CSS で組んだ帳票を、サーバーを介さずテキスト選択・検索できるベクター PDF に変換します。日本の領収証・適格請求書のために作りました。</p>
+    <div class="badges">
+      <span class="badge">依存ゼロ</span>
+      <span class="badge">gzip 19KB</span>
+      <span class="badge">日本語フォント埋め込み</span>
+      <span class="badge">複数ページ対応</span>
+      <span class="badge">MIT</span>
+    </div>
+    <div class="actions">
+      <a class="btn primary" href="./demo.html">ブラウザで試す</a>
+      <a class="btn" href="#quickstart">使い方を見る</a>
+    </div>
+  </section>
+
+  <h2>何が違うのか</h2>
+  <p>HTML を PDF にする方法はいくつもありますが、「ブラウザだけで動く」「HTML/CSS で書ける」「テキストが選択できる」の三つを同時に満たすものがありませんでした。</p>
+  <table>
+    <thead><tr><th>方法</th><th>仕組み</th><th>困ること</th></tr></thead>
+    <tbody>
+      <tr><td>html2canvas + jsPDF</td><td>画面を画像にして PDF に貼る</td><td>テキストを選択・検索できない。拡大すると粗い。ファイルが重い</td></tr>
+      <tr><td>pdfmake / pdf-lib</td><td>独自 DSL で座標を指定</td><td>HTML/CSS で書けない。デザイン変更のたびに座標を計算し直す</td></tr>
+      <tr><td>Puppeteer など</td><td>サーバー側の headless ブラウザ</td><td>PDF 生成のためだけにサーバーが要る</td></tr>
+      <tr><td><strong>このライブラリ</strong></td><td>ブラウザの計算結果を読み取り、PDF のベクター命令に変換</td><td>レイアウトはブラウザ任せ。描画系の一部 CSS が未対応</td></tr>
+    </tbody>
+  </table>
+
+  <h2>仕組み</h2>
+  <p>レイアウトエンジンは実装していません。非表示の <code>&lt;iframe&gt;</code> に用紙幅で HTML を描画させ、ブラウザが計算した座標・色・フォント情報を <code>getBoundingClientRect()</code> と <code>Range.getClientRects()</code> で読み取り、それを PDF の描画命令に変換します。</p>
+  <p>つまり <strong>Flexbox も Grid もテーブルも、日本語の行分割と禁則も、ブラウザが表示したとおりに出ます</strong>。ライブラリが責任を持つのは「見えているものを、同じ位置に PDF へ書き出すこと」だけです。</p>
+  <div class="cards">
+    <div class="card"><h3>テキストはテキストのまま</h3><p>グリフをベクターで描き、ToUnicode を付けて埋め込むので、選択・コピー・検索・拡大がすべて効きます。</p></div>
+    <div class="card"><h3>フォントはサブセット化</h3><p>使った文字のグリフだけを取り出して埋め込みます。日本語フォントでも PDF は数十 KB 台に収まります。</p></div>
+    <div class="card"><h3>複数ページも自動で</h3><p>行や表の行を跨がない位置で分割し、<code>&lt;thead&gt;</code> と <code>&lt;tfoot&gt;</code> は各ページに繰り返します。</p></div>
+  </div>
+
+  <h2 id="quickstart">使い方</h2>
+  <pre><code>npm install @hidemikimura/receipt-html-to-pdf</code></pre>
+  <p>フォントの登録はアプリの起動時に一度だけ。<strong>HTML 側の <code>@font-face</code> と同じファイル</strong>を渡すのが大事なところです。ブラウザが計測に使うフォントと、PDF に埋め込むグリフを一致させます。</p>
+  <pre><code>import { registerFont, htmlToPdf, downloadPdf } from '@hidemikimura/receipt-html-to-pdf';
+
+await registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+await registerFont({ family: 'BIZ UDPGothic', weight: 700, src: '/fonts/BIZUDPGothic-Bold.ttf' });
+
+const pdf = await htmlToPdf(document.getElementById('receipt'), {
+  page: { size: 'A4', margin: '15mm' },
+  metadata: { title: '領収証 No. R-2026-000123' },
+  onWarning: (w) =&gt; console.warn(w.code, w.message),
+});
+
+downloadPdf(pdf, 'receipt.pdf');</code></pre>
+  <p>対応する HTML 側の指定はこうです。</p>
+  <pre><code>@font-face {
+  font-family: "BIZ UDPGothic";
+  font-weight: 400;
+  src: url("/fonts/BIZUDPGothic-Regular.ttf");
+}</code></pre>
+
+  <h2>フォントの制約</h2>
+  <p>ブラウザは OS のフォントファイルを読めないため、PDF に埋め込むフォントはアプリ側が渡します。使えるのは <strong>TrueType（<code>glyf</code> アウトライン）の静的 TTF</strong> だけです。</p>
+  <table>
+    <thead><tr><th>形式</th><th>可否</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>静的 TTF（<code>glyf</code>）</td><td class="yes">✅</td><td>BIZ UDPGothic、IPAex ゴシックなど</td></tr>
+      <tr><td>OpenType/CFF（<code>.otf</code> の多く）</td><td class="no">✕</td><td>明確なエラーになります</td></tr>
+      <tr><td>可変フォント</td><td class="partial">△</td><td>デフォルトインスタンスのみ。Bold が出ません</td></tr>
+      <tr><td>WOFF / WOFF2 / TTC</td><td class="no">✕</td><td>元の <code>.ttf</code> を配信してください</td></tr>
+    </tbody>
+  </table>
+  <div class="note warn">
+    <p><strong>Noto Sans JP を使うときの注意。</strong> Google Fonts 配布版は可変フォント（<code>NotoSansJP[wght].ttf</code>）なので Bold が出ません。GitHub の notofonts 配布版 OTF は CFF で埋め込めません。<code>fonttools varLib.instancer</code> で静的 TTF にしてから渡してください。迷ったら <strong>BIZ UDPGothic</strong>（SIL OFL、Google Fonts の静的 TTF）が確実です。</p>
+  </div>
+
+  <h2>できること・できないこと</h2>
+  <p>位置とサイズを決める CSS はブラウザの計算をそのまま使うので、<strong>レイアウト系は全部そのとおりに出ます</strong>。描画系には対応範囲があります。</p>
+  <div class="cards">
+    <div class="card"><h3>出ます</h3><p>背景色、ボーダー（辺ごと・破線・角丸）、画像（PNG 透過 / JPEG）、<code>opacity</code>、2D <code>transform</code>、<code>overflow: hidden</code>、<code>::before</code> / <code>::after</code> の文字列</p></div>
+    <div class="card"><h3>出ません</h3><p><code>box-shadow</code>、グラデーション、<code>filter</code>、縦書き、3D <code>transform</code>、インライン <code>&lt;svg&gt;</code></p></div>
+    <div class="card"><h3>例外にはなりません</h3><p>未対応の指定があっても変換は止まらず、<code>onWarning</code> に何が無視されたかが届きます。</p></div>
+  </div>
+  <p><a href="./css.html">対応 CSS の全一覧を見る →</a></p>
+
+  <h2>AI エージェント向けのスキル</h2>
+  <p>Claude Code などのコーディングエージェントにこのライブラリを使わせるための <code>SKILL.md</code> を同梱しています。フォントの制約、対応 CSS、日本の領収証の記載要件、よくあるエラーの対処が入っています。</p>
+  <pre><code>mkdir -p .claude/skills
+cp -r node_modules/@hidemikimura/receipt-html-to-pdf/skills/receipt-html-to-pdf .claude/skills/</code></pre>
+
+  <h2>ライセンス</h2>
+  <p>MIT © 2026 Hidemi Kimura。参照フォントの BIZ UDPGothic は SIL Open Font License 1.1 で、PDF への埋め込みと再配布が許可されています。</p>
+</main>
+
+<footer class="site-footer">
+  <a href="https://github.com/hidemikimura/receipt-html-to-pdf">GitHub</a> ·
+  <a href="https://www.npmjs.com/package/@hidemikimura/receipt-html-to-pdf">npm</a> ·
+  <a href="https://github.com/hidemikimura/receipt-html-to-pdf/blob/main/CHANGELOG.md">変更履歴</a>
+</footer>
+
+<script type="module">
+  try {
+    const { meta } = await import('./assets/lib/meta.js');
+    for (const el of document.querySelectorAll('[data-version]')) el.textContent = 'v' + meta.version;
+  } catch {}
+</script>
+</body>
+</html>
