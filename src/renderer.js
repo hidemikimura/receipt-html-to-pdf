@@ -32,6 +32,10 @@ export async function renderDocument(input, opts) {
   doc.write(html);
   doc.close();
 
+  // 宣言的シャドウ DOM で復元した要素はアップグレードされないため :defined がマッチしない。
+  // 中身の無いスタブを定義してマッチさせる（描画には影響しない）。
+  defineStubElements(doc, win);
+
   // 高さを内容に合わせる（スクロールが発生しないようにする）
   const fit = () => {
     iframe.style.height = `${Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight, 100)}px`;
@@ -58,7 +62,7 @@ export async function renderDocument(input, opts) {
 
 /**
  * @param {import('./index.js').ConvertInput} input
- * @param {{stylesheets: 'inherit'|'none'|string[], mediaPrint: boolean, baseUrl?: string}} opts
+ * @param {{stylesheets: 'inherit'|'none'|string[], mediaPrint: boolean, baseUrl?: string, warn?: (w: import('./index.js').ConversionWarning) => void}} opts
  * @returns {string}
  */
 function buildHtml(input, opts) {
@@ -81,10 +85,10 @@ function buildHtml(input, opts) {
 
   // 要素: outerHTML と親文書のスタイルを持ち込む。
   // <html> / <body> の属性（class, lang, data-* …）も写し、`body.reissue .x` のような祖先依存のセレクタを効かせる。
-  const styles = collectStyles(opts.stylesheets, opts.mediaPrint);
+  const styles = collectStyles(opts.stylesheets, opts.mediaPrint) + shadowHostStyles(input, opts.stylesheets, opts.mediaPrint);
   const htmlAttrs = copyAttrs(document.documentElement);
   const bodyAttrs = copyAttrs(document.body);
-  const body = input === document.body || input === document.documentElement ? document.body.innerHTML : input.outerHTML;
+  const body = serializeElement(input, opts.warn ?? (() => {}));
   return `<!DOCTYPE html><html${htmlAttrs}><head><meta charset="utf-8">${base}${reset}${styles}</head><body${bodyAttrs}>${body}</body></html>`;
 }
 
@@ -107,6 +111,9 @@ function collectStyles(stylesheets, mediaPrint) {
         parts.push(`<link rel="stylesheet" href="${escapeAttr(el.href)}"${el.media ? ` media="${escapeAttr(el.media)}"` : ''}>`);
       }
     }
+    // document.adoptedStyleSheets（CSSOM で組み立てたスタイル）は <style> に出てこないので取り出す
+    const adopted = cssTextOf(document.adoptedStyleSheets);
+    if (adopted) parts.push(`<style>${mediaPrint ? expandPrintMediaCss(adopted) : adopted}</style>`);
     return parts.join('');
   }
   for (const s of stylesheets) {
@@ -117,6 +124,170 @@ function collectStyles(stylesheets, mediaPrint) {
     }
   }
   return parts.join('');
+}
+
+/**
+ * シャドウツリーの中の要素を渡されたとき、その要素が属するシャドウルート
+ * （およびその外側のシャドウルート）のスタイルを取り出す。
+ * 文書のスタイルシートはシャドウツリーに届かないため、`stylesheets: 'inherit'` では拾えない。
+ *
+ * @param {Element} input
+ * @param {'inherit'|'none'|string[]} stylesheets
+ * @param {boolean} mediaPrint
+ * @returns {string}
+ */
+function shadowHostStyles(input, stylesheets, mediaPrint) {
+  if (stylesheets !== 'inherit') return '';
+  /** @type {string[]} */
+  const parts = [];
+  let node = /** @type {Node|null} */ (input.getRootNode());
+  // 内側のツリーから順に集め、外側ほど先（優先度が低い位置）に置く
+  while (node && node !== document && 'host' in node) {
+    const root = /** @type {ShadowRoot} */ (node);
+    const css = [...root.querySelectorAll('style')].map((el) => el.textContent ?? '').join('\n') + '\n' + cssTextOf(root.adoptedStyleSheets);
+    if (css.trim()) parts.unshift(css);
+    node = root.host.getRootNode();
+  }
+  return parts.map((css) => `<style>${mediaPrint ? expandPrintMediaCss(css) : css}</style>`).join('');
+}
+
+/** シャドウルートを持てない要素（void 要素）。outerHTML にフォールバックする。 */
+const VOID_TAGS = new Set(['AREA', 'BASE', 'BR', 'COL', 'EMBED', 'HR', 'IMG', 'INPUT', 'LINK', 'META', 'SOURCE', 'TRACK', 'WBR']);
+
+/**
+ * 要素を outerHTML 相当の文字列にする。開いているシャドウルートは
+ * `<template shadowrootmode>`（宣言的シャドウ DOM）として一緒に直列化し、
+ * iframe 側のパーサに本物の ShadowRoot として復元させる。
+ *
+ * `adoptedStyleSheets` は直列化されないので、一時的に `<style>` として差し込んでから直列化する
+ * （同期処理のうちに元へ戻すので画面には影響しない）。
+ *
+ * @param {Element} input
+ * @param {(w: import('./index.js').ConversionWarning) => void} warn
+ * @returns {string}
+ */
+function serializeElement(input, warn) {
+  const whole = input === document.body || input === document.documentElement;
+  const roots = collectShadowRoots(whole ? document.body : input);
+  if (!roots.length) return whole ? document.body.innerHTML : input.outerHTML;
+
+  const host = whole ? document.body : input;
+  if (typeof (/** @type {any} */ (host).getHTML) !== 'function') {
+    warn({
+      code: 'unsupported-css',
+      message:
+        'This browser lacks Element.getHTML(); shadow DOM content cannot be serialized and will be missing from the PDF. ' +
+        'Pass an element inside the shadow root instead.',
+      element: input,
+    });
+    return whole ? document.body.innerHTML : input.outerHTML;
+  }
+
+  const restore = inlineAdoptedStyleSheets(roots);
+  try {
+    const opts = { serializableShadowRoots: true, shadowRoots: roots };
+    const inner = /** @type {string} */ (/** @type {any} */ (host).getHTML(opts));
+    if (whole) return inner;
+    const tag = input.tagName.toLowerCase();
+    // void 要素はシャドウルートも子も持たないので通常の outerHTML でよい
+    if (VOID_TAGS.has(input.tagName)) return input.outerHTML;
+    return `<${tag}${copyAttrs(input)}>${inner}</${tag}>`;
+  } finally {
+    restore();
+  }
+}
+
+/**
+ * root 以下（シャドウツリーの中も含む）の open なシャドウルートを集める。
+ * closed なシャドウルートは参照できないため対象外。
+ * @param {Element|ShadowRoot} root
+ * @returns {ShadowRoot[]}
+ */
+function collectShadowRoots(root) {
+  /** @type {ShadowRoot[]} */
+  const out = [];
+  /** @param {Element|ShadowRoot} node */
+  const walk = (node) => {
+    if (node instanceof Element && node.shadowRoot) {
+      out.push(node.shadowRoot);
+      walk(node.shadowRoot);
+    }
+    for (const child of node.children) walk(child);
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * 各シャドウルートの adoptedStyleSheets を一時的に `<style>` として差し込む。
+ * 戻り値を呼ぶと取り除く。
+ * @param {ShadowRoot[]} roots
+ * @returns {() => void}
+ */
+function inlineAdoptedStyleSheets(roots) {
+  /** @type {HTMLStyleElement[]} */
+  const added = [];
+  for (const root of roots) {
+    const css = cssTextOf(root.adoptedStyleSheets);
+    if (!css) continue;
+    const style = document.createElement('style');
+    style.setAttribute('data-rhtp-adopted', '');
+    style.textContent = css;
+    root.insertBefore(style, root.firstChild);
+    added.push(style);
+  }
+  return () => {
+    for (const style of added) style.remove();
+  };
+}
+
+/**
+ * CSSStyleSheet の配列を CSS テキストにする。読めないもの（クロスオリジン）は飛ばす。
+ * @param {readonly CSSStyleSheet[]|undefined} sheets
+ * @returns {string}
+ */
+function cssTextOf(sheets) {
+  if (!sheets || !sheets.length) return '';
+  const parts = [];
+  for (const sheet of sheets) {
+    try {
+      for (const rule of sheet.cssRules) parts.push(rule.cssText);
+    } catch {
+      // クロスオリジンのスタイルシートは読めない
+    }
+  }
+  return parts.join('\n');
+}
+
+/**
+ * iframe 内に、文書に出てくるカスタム要素名の空のスタブを定義する。
+ * これをしないと要素が未定義のままで `:defined` がマッチせず、既定の `display: inline` で組まれてしまう。
+ * @param {Document} doc
+ * @param {Window} win
+ */
+function defineStubElements(doc, win) {
+  const registry = /** @type {CustomElementRegistry|undefined} */ (/** @type {any} */ (win).customElements);
+  const Base = /** @type {typeof HTMLElement|undefined} */ (/** @type {any} */ (win).HTMLElement);
+  if (!registry || !Base) return;
+  /** @type {Set<string>} */
+  const names = new Set();
+  /** @param {ParentNode} node */
+  const scan = (node) => {
+    for (const el of node.querySelectorAll('*')) {
+      // `is=` によるカスタマイズド組み込み要素は対象外（定義に extends が必要なため）
+      if (el.tagName.includes('-') && !el.hasAttribute('is')) names.add(el.tagName.toLowerCase());
+      if (el.shadowRoot) scan(el.shadowRoot);
+    }
+  };
+  scan(doc);
+  for (const name of names) {
+    if (registry.get(name)) continue;
+    try {
+      registry.define(name, class extends Base {});
+    } catch {
+      // 不正な名前などは無視する
+    }
+  }
 }
 
 /**
@@ -239,7 +410,7 @@ export function materializePseudoElements(doc, warn) {
   if (!win) return;
   /** @type {{el: Element, pseudo: 'before'|'after', text: string, styles: [string, string][]}[]} */
   const jobs = [];
-  for (const el of doc.body.querySelectorAll('*')) {
+  for (const el of deepQueryAll(doc.body)) {
     for (const pseudo of /** @type {('before'|'after')[]} */ (['before', 'after'])) {
       const ps = win.getComputedStyle(el, `::${pseudo}`);
       const content = ps.content;
@@ -266,12 +437,20 @@ export function materializePseudoElements(doc, warn) {
   }
   if (!jobs.length) return;
 
-  const style = doc.createElement('style');
-  style.setAttribute('data-rhtp-pseudo', '');
-  style.textContent =
+  const disableCss =
     '[data-rhtp-pseudo-host~="before"]::before{content:none!important;display:none!important}' +
     '[data-rhtp-pseudo-host~="after"]::after{content:none!important;display:none!important}';
+  const style = doc.createElement('style');
+  style.setAttribute('data-rhtp-pseudo', '');
+  style.textContent = disableCss;
   doc.head.appendChild(style);
+  // 文書のスタイルはシャドウツリーに届かないので、対象を含むシャドウルートにも同じ規則を入れる
+  for (const root of new Set(jobs.map((j) => j.el.getRootNode()).filter((r) => r !== doc))) {
+    const inner = doc.createElement('style');
+    inner.setAttribute('data-rhtp-pseudo', '');
+    inner.textContent = disableCss;
+    /** @type {ShadowRoot} */ (root).appendChild(inner);
+  }
 
   for (const job of jobs) {
     const span = doc.createElement('span');
@@ -284,6 +463,25 @@ export function materializePseudoElements(doc, warn) {
     if (job.pseudo === 'before') job.el.insertBefore(span, job.el.firstChild);
     else job.el.appendChild(span);
   }
+}
+
+/**
+ * root 以下のすべての要素を、シャドウツリーの中も含めて列挙する。
+ * @param {Element|ShadowRoot} root
+ * @returns {Element[]}
+ */
+function deepQueryAll(root) {
+  /** @type {Element[]} */
+  const out = [];
+  /** @param {Element|ShadowRoot} node */
+  const walk = (node) => {
+    for (const el of node.querySelectorAll('*')) {
+      out.push(el);
+      if (el.shadowRoot) walk(el.shadowRoot);
+    }
+  };
+  walk(root);
+  return out;
 }
 
 /**

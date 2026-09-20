@@ -10,7 +10,7 @@
 
 **ドキュメント: https://hidemikimura.github.io/receipt-html-to-pdf/** （[デモ](https://hidemikimura.github.io/receipt-html-to-pdf/demo.html) / [API リファレンス](https://hidemikimura.github.io/receipt-html-to-pdf/api.html) / [対応 CSS 一覧](https://hidemikimura.github.io/receipt-html-to-pdf/css.html)）
 
-> **v0.1.0**（初回公開）— テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・複数ページ（行を跨がない分割、`break-*`、`thead` / `tfoot` の繰り返し、ヘッダー／フッター）に対応。依存ゼロ、minify バンドルは gzip 19KB。
+> **v0.2.0** — テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・複数ページ（行を跨がない分割、`break-*`、`thead` / `tfoot` の繰り返し、ヘッダー／フッター）に加え、**シャドウ DOM（Web Components）** に対応。依存ゼロ、minify バンドルは gzip 20KB。
 > Chromium / Firefox / WebKit の 3 ブラウザで Playwright テスト（テキスト抽出・ページ分割・画素差分）に合格。対応 CSS は [docs/css-support.md](docs/css-support.md)、設計と経緯は [docs/design.md](docs/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使い方
@@ -41,7 +41,7 @@ downloadPdf(pdf, 'receipt.pdf');
 
 主なオプション（`ConvertOptions`、型は `types/index.d.ts`）: `page: { size, orientation, margin }`、`header` / `footer`（`{{pageNumber}}` `{{totalPages}}`）、`stylesheets: 'inherit' | 'none' | [url または CSS 文字列]`、`mediaPrint`、`fontFallback`、`metadata`、`compress`、`baseUrl`、`onWarning`。
 
-サンプル: [`examples/vanilla.html`](examples/vanilla.html)（`npm run dev` 後に `/examples/vanilla.html`）、[`examples/react.jsx`](examples/react.jsx)、[`examples/lit.js`](examples/lit.js)（Shadow DOM では `stylesheets` に CSS を明示的に渡す）。
+サンプル: [`examples/vanilla.html`](examples/vanilla.html)（`npm run dev` 後に `/examples/vanilla.html`）、[`examples/react.jsx`](examples/react.jsx)、[`examples/lit.js`](examples/lit.js)（シャドウ DOM はそのまま変換できる）。
 
 ## インストール
 
@@ -77,7 +77,7 @@ brew install qpdf                                # 任意: 生成 PDF の構造�
 
 CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイズ検査の後、3 ブラウザ並列でブラウザテストを流し、生成された PDF を `qpdf --check` で検証する。
 
-## 対応範囲（v0.1.0）
+## 対応範囲（v0.2.0）
 
 | 対応 | 未対応（onWarning で通知） |
 |---|---|
@@ -86,6 +86,7 @@ CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイ�
 | `<img>`（PNG 透過 / JPEG、`object-fit`）、`background-image: url()`（size / position）、`overflow: hidden` のクリップ | SVG のベクター化（画像として埋め込む） |
 | `transform`（2D、`transform-origin`）、`::before` / `::after`（文字列 content） | 3D transform、`counter()` / `url()` content |
 | 複数ページ: 行・`tr`・`thead`・`tfoot`・`<img>`・`break-inside: avoid` を跨がない分割、`break-before/after: page`、`thead` / `tfoot` の各ページ繰り返し、`header` / `footer` テンプレート（`{{pageNumber}}` `{{totalPages}}`） | `break-before/after: avoid`、`orphans` / `widows`、ページ番号による高さ変化 |
+| Web Components: シャドウ DOM のホスト要素をそのまま変換（宣言的シャドウ DOM で直列化）、`<slot>` の割り当て、`:host` / `::slotted()`、`adoptedStyleSheets`、`:defined` | `closed` なシャドウルート、`Element.getHTML()` の無いブラウザ（警告して light DOM のみ） |
 | レイアウト全般（Flexbox / Grid / テーブル / 禁則 / letter-spacing）はブラウザ計算をそのまま利用 | |
 
 ## フィクスチャ
@@ -124,9 +125,7 @@ npm run site:dev    # 組み立てて http://localhost:5174 で表示
 2. `npm run pack:check` で tarball の内容を確認する（`files` で許可リスト管理。フォント・フィクスチャ・テストは含まれない）
 3. `npm login`（スコープ `@hidemikimura` の所有者アカウント）
 4. `npm publish` — `prepublishOnly` が typecheck → 単体テスト → `.d.ts` 生成 → minify ビルド + サイズ検査を自動で流す。`publishConfig.access` が `public` なのでスコープ付きでも無料で公開される
-5. `git tag v0.1.0 && git push --tags`
-
-初回公開前に `package.json` の `repository` / `homepage` / `bugs` の URL（`github.com/hidemikimura/receipt-html-to-pdf` を仮置き）を実際のリポジトリに合わせること。
+5. `git tag v0.2.0 && git push --tags`
 
 ## ライセンス
 

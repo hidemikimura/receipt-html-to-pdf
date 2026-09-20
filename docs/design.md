@@ -2,9 +2,9 @@
 
 - 作成日: 2026-09-16（同日、方針確定）
 - 作成者: 木村英実（ecx Inc.）
-- ステータス: **0.1.0 公開済み**（2026-09-18）。機能は内部マイルストーン v1.0 まで完了、API は 1.0.0 まで変更の可能性あり
+- ステータス: **0.2.0 リリース準備中**（0.1.0 を 2026-09-18 に公開済み）。API は 1.0.0 まで変更の可能性あり
 - ライブラリ名: **Receipt html to pdf**
-- npm パッケージ名: `@hidemikimura/receipt-html-to-pdf` — **0.1.0 を npm に公開済み**（2026-09-18。`npm view` で version 0.1.0 / 41 ファイルを確認、別プロジェクトからのインストールと import も確認）
+- npm パッケージ名: `@hidemikimura/receipt-html-to-pdf` — 0.1.0 を 2026-09-18 に公開。次は 0.2.0（シャドウ DOM 対応、18 章）
 - 実装言語: 素の JavaScript（ESM）+ JSDoc 型注釈（`checkJs` で型検査、`.d.ts` は JSDoc から生成）
 - ライセンス: MIT
 - リポジトリ: `/Users/hidemikimura/Downloads/receipt-html-to-pdf`
@@ -438,6 +438,27 @@ v1.x 候補（優先度順の私案）: `break-before/after: avoid`、`backgroun
 **サイト（`site/`）**: 依存ゼロの静的 HTML + CSS + ESM、日本語のみ。`index.html`（何ができるか・他手法との比較・仕組み・クイックスタート）、`demo.html`（ブラウザ内で実際に PDF を生成する）、`api.html`、`css.html` の 4 ページ。`scripts/build-site.mjs` が (1) `dist/` の minify バンドルを `site/assets/lib/` にコピー、(2) `docs/css-support.md` から `css.html` を生成（対応表の単一の出所を保つため）、(3) `pyftsubset` でデモに出る文字だけに絞った BIZ UDPGothic のサブセット（各 800KB 強）を作る。生成物は `.gitignore` に入れ、`.github/workflows/pages.yml` が main への push で組み立てて GitHub Pages に deploy する（Settings → Pages の Source を「GitHub Actions」にする必要がある）。
 
 デモは実際に Chromium で動作を確認した（27.2KB / 74ms、警告なし、pdf.js で全期待文字列を抽出、A5 + フッターで 2 ページとページ番号）。途中で `.btn { display: inline-flex }` が UA の `[hidden] { display: none }` に勝ってしまい、生成前からダウンロードボタンが見えていたので、`site.css` に `[hidden] { display: none !important; }` を足した。
+
+## 18. シャドウ DOM 対応（2026-09-20）
+
+17 章までの制約: 変換は対象要素の `outerHTML` を非表示 iframe に `document.write()` して計測する方式なので、`outerHTML` に含まれないシャドウルートの中身は iframe に渡らない。走査側も `el.childNodes` しか辿らず、`shadowRoot` にも `<slot>` の割り当てにも触れていなかった。そのためカスタム要素のホストを渡すと、ホスト自身の背景・ボーダーと、スロットに配られる前の light DOM の子しか出力されなかった。
+
+**案 A（採用）: 宣言的シャドウ DOM で直列化する。** `Element.getHTML({ serializableShadowRoots: true, shadowRoots: [...] })` でシャドウルートを `<template shadowrootmode>` 込みで直列化し、iframe 側のパーサに本物の `ShadowRoot` として復元させる。スロットの割り当ても `:host` / `::slotted()` もブラウザが解決するので、計測結果がそのまま正しい。
+
+案 B（iframe を使わずライブ DOM を直接計測する）は、紙幅に合わせた再レイアウトと `mediaPrint` ができずページ分割の前提が崩れるため採らなかった。
+
+実装（`renderer.js` / `walker/walk.js`）:
+
+- `serializeElement()`: 対象要素以下（シャドウツリーの中も含む）の `open` なシャドウルートを `collectShadowRoots()` で集め、`getHTML()` に渡す。`getHTML` は innerHTML 相当を返すので、開始タグ（`copyAttrs()` で属性を写す）と終了タグで包んで outerHTML 相当にする。**`shadowRoots` に明示的に渡したシャドウルートは、対象要素自身のものも `<template>` として出力される**ことを Chromium で確認した。`getHTML` が無いブラウザではシャドウルートがある場合に警告して `outerHTML` に落とす。`closed` なシャドウルートは参照できないため対象外。
+- `adoptedStyleSheets` は直列化されない（`<style>` だけが出る）。`inlineAdoptedStyleSheets()` が各シャドウルートへ一時的に `<style data-rhtp-adopted>` を差し込み、直列化のあと同期のうちに取り除く。画面には影響しない。Lit の `static styles` はこの経路で通る。
+- `collectStyles()` に `document.adoptedStyleSheets` を追加。さらに `shadowHostStyles()` を足し、**シャドウツリーの中の要素を渡されたとき**はその要素が属するシャドウルート（と外側のシャドウルート）の `<style>` と `adoptedStyleSheets` を集める。これで `stylesheets: 'inherit'` のままシャドウ内の要素を渡せる。
+- `defineStubElements()`: iframe 内に、文書に出てくるカスタム要素名の空のスタブを `customElements.define()` する。これが無いと要素が未定義のままで `:defined` がマッチせず、既定の `display: inline` で組まれてレイアウトが変わる。`is=` によるカスタマイズド組み込み要素は対象外。
+- `materializePseudoElements()`: 走査を `deepQueryAll()` でシャドウツリーまで広げ、擬似要素を打ち消す `<style>` を対象を含む各シャドウルートにも入れる（文書のスタイルはシャドウツリーに届かないため）。
+- `walker/walk.js`: 子ノードの取得を `flatChildNodes()` に置き換え、flat tree を辿るようにした。シャドウホストならシャドウルートの子、`<slot>` なら `assignedNodes({ flatten: true })`（割り当てが無ければフォールバック内容）、それ以外は従来どおり。スロットに配られたテキストノードは `<slot>` の computed style で描くので、継承も flat tree どおりになる。
+
+検証: Chromium のブラウザテストに 3 件追加した（ホスト要素をそのまま変換してスロットと `adoptedStyleSheets` が出ること、`:defined` が効くこと、シャドウルート内の要素を `inherit` のまま変換できること）。既存の 8 件に退行なし。minify バンドルは gzip 18.8KB → 19.6KB。
+
+残っている制約: `closed` なシャドウルート、`Element.getHTML()` の無いブラウザ（警告を出して light DOM だけ変換）。
 
 ## 付録 A. 対応予定 CSS プロパティ一覧（v1.0）
 

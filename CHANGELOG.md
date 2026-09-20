@@ -2,6 +2,25 @@
 
 設計と経緯の詳細は docs/design.md。
 
+## 0.2.0 — シャドウ DOM 対応（2026-09-20）
+
+### 追加
+
+- **シャドウ DOM 対応**。カスタム要素のホストをそのまま `htmlToPdf()` に渡せるようになった。`open` なシャドウルートを宣言的シャドウ DOM（`<template shadowrootmode>`）として直列化し、計測用 iframe でブラウザに復元させる方式（docs/design.md 18 章）
+  - `<slot>` の割り当てを flat tree で解決する。割り当てが無ければフォールバック内容を描く
+  - `:host` / `::slotted()` / `::part()` が適用される
+  - `adoptedStyleSheets`（Lit の `static styles`）と `document.adoptedStyleSheets` を CSS として持ち込む
+  - シャドウルート内の要素を渡した場合、そのツリーのスタイルを `stylesheets: 'inherit'`（既定）で拾う
+  - iframe 内にカスタム要素名の空のスタブを定義し、`:defined` をマッチさせる
+  - `::before` / `::after` の実体化をシャドウツリーにも適用
+  - 制約: `closed` なシャドウルートと、`Element.getHTML()` の無いブラウザは対象外（警告を出して light DOM だけ変換）
+- ドキュメント: `docs/css-support.md` に「Web Components」の節、`display: none` / `visibility: hidden` の行
+- AI エージェント向け skill（`skills/receipt-html-to-pdf/`）と GitHub Pages のドキュメントサイト（`site/`）
+
+### その他
+
+- minify バンドル: gzip 18.8KB → 19.6KB
+
 ## 0.1.0 — 初回公開（2026-09-18）
 
 npm への最初の公開バージョン。開発中の内部マイルストーン（下記 0.1〜1.0）をまとめて 0.1.0 として出す。

@@ -38,6 +38,28 @@ import { loadImage, parseBackgroundUrl, fitImage, objectFitToSize } from './imag
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'META', 'LINK', 'TITLE', 'BASE', 'IFRAME', 'CANVAS', 'VIDEO', 'AUDIO', 'SVG', 'OBJECT', 'EMBED']);
 
+/**
+ * flat tree（シャドウ DOM を展開した木）での子ノードを返す。
+ *
+ * - シャドウホスト → シャドウルートの子（light DOM の子は `<slot>` 経由で現れる）
+ * - `<slot>` → 割り当てられたノード（無ければフォールバック内容）
+ * - それ以外 → 通常の子ノード
+ *
+ * @param {Element} el
+ * @returns {ChildNode[]}
+ */
+function flatChildNodes(el) {
+  const shadow = el.shadowRoot;
+  if (shadow) return [...shadow.childNodes];
+  if (el.tagName === 'SLOT') {
+    const slot = /** @type {HTMLSlotElement} */ (/** @type {unknown} */ (el));
+    if (typeof slot.assignedNodes === 'function') {
+      return /** @type {ChildNode[]} */ (slot.assignedNodes({ flatten: true }));
+    }
+  }
+  return [...el.childNodes];
+}
+
 /** 未対応 CSS プロパティ: [computedStyle のキー, 「指定されている」判定] */
 const UNSUPPORTED = /** @type {[keyof CSSStyleDeclaration & string, (v: string) => boolean][]} */ ([
   ['boxShadow', (v) => v !== 'none'],
@@ -225,7 +247,7 @@ export async function walk(root, ctx) {
       out = [];
     }
     const next = { z, alpha, decorations };
-    for (const node of [...el.childNodes]) {
+    for (const node of flatChildNodes(el)) {
       if (node.nodeType === Node.TEXT_NODE) {
         if (visible) paintText(/** @type {Text} */ (node), el, style, next);
       } else if (node.nodeType === Node.ELEMENT_NODE) {

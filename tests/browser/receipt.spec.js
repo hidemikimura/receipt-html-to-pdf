@@ -127,3 +127,95 @@ test('overflow: hidden ではみ出した内容は描かれず、抽出テキス
   expect(text).not.toContain('隠れる二行目');
   // 1 行目のはみ出し部分は同じ行（同じテキスト命令）なのでクリップだけで消える。文字は残ってよい
 });
+
+test('シャドウ DOM のホスト要素をそのまま変換できる（スロット・adoptedStyleSheets 込み）', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const { bytes, warnings, supported } = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 700, src: '/fonts/BIZUDPGothic-Bold.ttf' });
+
+    class ReceiptCard extends HTMLElement {
+      constructor() {
+        super();
+        const sr = this.attachShadow({ mode: 'open' });
+        sr.innerHTML =
+          '<style>:host{display:block;width:400px;font-family:"BIZ UDPGothic",sans-serif;font-size:14px}' +
+          'h2{margin:0 0 8px}</style>' +
+          '<h2>シャドウの見出し</h2>' +
+          '<slot name="body">代替テキスト</slot>' +
+          '<p class="total">合計 ￥12,345-</p>';
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('.total{font-weight:700}');
+        sr.adoptedStyleSheets = [sheet];
+      }
+    }
+    customElements.define('receipt-card', ReceiptCard);
+
+    const host = document.createElement('receipt-card');
+    host.innerHTML = '<div slot="body">スロットに入れた明細</div>';
+    document.body.appendChild(host);
+    await customElements.whenDefined('receipt-card');
+    await document.fonts.ready;
+
+    const warnings = [];
+    const out = await lib.htmlToPdf(host, {
+      stylesheets: 'none',
+      fontFallback: ['BIZ UDPGothic'],
+      output: 'uint8array',
+      onWarning: (w) => warnings.push(`${w.code}: ${w.message}`),
+    });
+    return { bytes: Array.from(out), warnings, supported: typeof host.getHTML === 'function' };
+  });
+
+  test.skip(!supported, 'Element.getHTML() がこのブラウザにない');
+  expect(warnings).toEqual([]);
+  const { pages } = await extractText(bytes);
+  // pdf.js はグリフ間の隙間を空白として拾うことがあるので空白を落として比較する
+  const text = pages.join('\n').replace(/\s/g, '');
+  expect(text).toContain('シャドウの見出し');
+  expect(text).toContain('スロットに入れた明細');
+  expect(text).toContain('合計');
+  // スロットが埋まっているのでフォールバックは出ない
+  expect(text).not.toContain('代替テキスト');
+});
+
+test('light DOM のカスタム要素と :defined がそのまま効く', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    customElements.define('light-card', class extends HTMLElement {});
+    const host = document.createElement('light-card');
+    host.innerHTML = '<span>light DOM の中身</span>';
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    const css = 'light-card{display:none} light-card:defined{display:block;width:300px;font-family:"BIZ UDPGothic";font-size:14px}';
+    const out = await lib.htmlToPdf(host, { stylesheets: [css], output: 'uint8array' });
+    return Array.from(out);
+  });
+  const { pages } = await extractText(bytes);
+  // :defined が効かないと display:none のままで何も出ない
+  expect(pages.join('\n').replace(/\s/g, '')).toContain('lightDOMの中身');
+});
+
+test('シャドウルート内の要素を渡すと、そのツリーのスタイルが inherit で引き継がれる', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const sr = host.attachShadow({ mode: 'open' });
+    sr.innerHTML = '<style>.inner{font-size:20px}</style><div class="inner">シャドウ内のスタイル</div>';
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync('.inner{font-family:"BIZ UDPGothic",sans-serif;width:300px}');
+    sr.adoptedStyleSheets = [sheet];
+    await document.fonts.ready;
+    // stylesheets を明示せず（inherit のまま）変換する
+    const out = await lib.htmlToPdf(sr.querySelector('.inner'), { output: 'uint8array' });
+    return Array.from(out);
+  });
+  const { pages } = await extractText(bytes);
+  expect(pages.join('\n').replace(/\s/g, '')).toContain('シャドウ内のスタイル');
+});

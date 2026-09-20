@@ -20,10 +20,9 @@
 | 文字幅が少しずつずれる | `@font-face` と `registerFont` のファイルが別物 | 同じ TTF を両方に渡す |
 | Bold が Regular で出る | 可変フォントを渡した（console.warn が出る） | 静的 TTF の Bold を別途 `registerFont` する |
 | 何も描かれない | 要素が `display:none`、または DOM 上に無い | 表示された状態の要素を渡す |
-| スタイルが当たらない | Shadow DOM 内の要素を渡した | `stylesheets: [cssText]` で CSS を明示的に渡す |
-| カスタム要素の中身が出ない（枠だけになる） | シャドウ DOM のホスト要素を渡した。`outerHTML` にシャドウルートは含まれない | `renderRoot.querySelector()` でシャドウルート内の要素を渡す。light DOM のカスタム要素ならホストのままでよい |
-| カスタム要素だけレイアウトが崩れる | `:defined` が iframe 内でマッチせず、既定の `display: inline` で組まれた | `my-el:defined { display: block }` から `:defined` を外す |
-| JS で足した CSS が効かない | `adoptedStyleSheets` や `sheet.insertRule()` は `stylesheets: 'inherit'` で拾えない | 同じ CSS を `stylesheets` に文字列で渡す |
+| カスタム要素の中身が出ない（枠だけになる） | `closed` なシャドウルート、または `Element.getHTML()` が無いブラウザ | `mode: 'open'` にする。警告（`unsupported-css`）にブラウザ側の理由が出ている |
+| カスタム要素の中身が古い | `connectedCallback` の描画が終わる前に変換した | `customElements.whenDefined()` と `document.fonts.ready` を待ってから呼ぶ |
+| シャドウ外の CSS が当たらない | 文書のスタイルシートはシャドウツリーに届かない（ブラウザの仕様どおり） | 必要な CSS をシャドウルート内に置くか、`stylesheets` に文字列で渡す |
 | 画像が出ない | クロスオリジンで CORS ヘッダーが無い | `crossorigin="anonymous"` と `Access-Control-Allow-Origin` を設定する。`image-failed` 警告が出ている |
 | 影や角丸グラデーションが消える | 未対応 CSS | `onWarning` の `unsupported-css` を見る。ボーダーや単色で代替する |
 | テーブルの罫線が二重になる | `border-collapse: separate` のまま隣接セルに罫線を引いた | `border-collapse: collapse` を使う |

@@ -1,4 +1,4 @@
-# 対応 CSS 一覧（v1.0）
+# 対応 CSS 一覧
 
 レイアウト（位置・サイズ・行分割）はすべてブラウザの計算結果をそのまま使うため、`display` / Flexbox / Grid / テーブル / `position` / `margin` / `padding` / `width` / `height` / `white-space` / `word-break` / `text-align` / `vertical-align` / `line-height` / `letter-spacing` / `text-indent` などのレイアウト系プロパティは**追加実装なしで再現される**。以下は「描画」に関わるプロパティの対応状況。
 
@@ -80,27 +80,28 @@
 
 ## Web Components
 
-変換は対象要素の `outerHTML` を非表示 iframe に書き出して計測する方式なので、シャドウ DOM かどうかで扱いが変わる。iframe 側ではカスタム要素の定義が読み込まれないため、要素はアップグレードされない。
+シャドウ DOM に対応している。変換時に対象要素を**宣言的シャドウ DOM**（`<template shadowrootmode>`）として直列化し、計測用の iframe 側でブラウザに本物のシャドウルートとして復元させるため、`<slot>` の割り当ても `:host` / `::slotted()` もブラウザが解決した結果がそのまま出る。
 
 | 対象 | 対応 | 備考 |
 |---|---|---|
-| light DOM のカスタム要素 | ✅ | 中身が light DOM にあるので `outerHTML` に含まれ、そのまま変換できる。ホスト要素を直接渡してよい |
-| シャドウ DOM のホスト要素 | ❌ | シャドウルートの中身は `outerHTML` に含まれず、走査も `shadowRoot` を辿らない。ホスト自身の背景・ボーダーと、スロットに入る前の light DOM の子しか出ない |
-| シャドウルート内の要素 | ✅ | `renderRoot.querySelector()` で取った要素を渡す。親文書のスタイルは継承されないので `stylesheets` に CSS を明示する（[`examples/lit.js`](https://github.com/hidemikimura/receipt-html-to-pdf/blob/main/examples/lit.js)） |
-| `<slot>` の割り当て解決 | ❌ | スロットに配られた内容は元の位置のまま扱われる |
-| `:defined` | ❌ | iframe 内では未定義扱いになるためマッチしない。`my-el:defined { display: block }` は効かず、既定の `display: inline` で組まれてレイアウトが変わる |
-| `:host` / `::slotted()` | ❌ | シャドウルートが無いため適用されない |
-| `adoptedStyleSheets` / `sheet.insertRule()` | ❌ | `stylesheets: 'inherit'` は `<style>` の `textContent` と `<link>` しか集めない。該当するなら `stylesheets` に CSS 文字列を渡す |
+| light DOM のカスタム要素 | ✅ | ホスト要素を直接渡してよい |
+| シャドウ DOM のホスト要素 | ✅ | `open` なシャドウルートは `Element.getHTML()` で直列化して持ち込む。入れ子のシャドウ DOM も辿る |
+| シャドウルート内の要素 | ✅ | `renderRoot.querySelector()` で取った要素も渡せる。そのツリーの `<style>` と `adoptedStyleSheets` は `stylesheets: 'inherit'`（既定）で引き継がれる |
+| `<slot>` の割り当て解決 | ✅ | flat tree（`assignedNodes({ flatten: true })`）を辿る。割り当てが無ければフォールバック内容を描く |
+| `:host` / `::slotted()` / `::part()` | ✅ | iframe 内にも本物のシャドウルートがあるため通常どおり適用される |
+| `:defined` | ✅ | 文書に出てくるカスタム要素名の空のスタブを iframe 内に定義してマッチさせる |
+| `adoptedStyleSheets` | ✅ | 直列化されないため、`sheet.cssRules` から CSS を取り出して `<style>` として持ち込む（文書・シャドウルートの両方） |
+| `sheet.insertRule()` | ✅ | 上と同じ経路で反映される |
 | `el.style.xxx = ...` | ✅ | `style` 属性として直列化されるので反映される |
+| `closed` なシャドウルート | ❌ | 外から参照できないため直列化できない。中身は出ない |
+| `Element.getHTML()` の無いブラウザ | ⚠️ | シャドウ DOM を持ち込めないので警告を出し、light DOM だけで変換する |
 
-変換対象のサブツリーの**中に**別のカスタム要素がある場合も、シャドウ DOM を使っていればその中身は出ない。PDF にしたい範囲は素の HTML で組んでおく。
-
-`connectedCallback` で DOM を組み立てる要素は、組み上がってから変換する。
+カスタム要素は iframe 側ではアップグレードされない（空のスタブが定義されるだけ）。JavaScript で後から DOM やスタイルを組み立てる要素は、**組み上がってから**変換する。
 
 ```js
 await customElements.whenDefined('my-receipt');
 await document.fonts.ready;
-const pdf = await htmlToPdf(el, { stylesheets: [RECEIPT_CSS] });
+const pdf = await htmlToPdf(document.querySelector('my-receipt'));
 ```
 
 ## フォントファイル
