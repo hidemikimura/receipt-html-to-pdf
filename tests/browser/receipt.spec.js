@@ -3,7 +3,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { serve, convertOnPage, extractText, missingStrings, normalize, hasPdftoppm, pixelDiff, readPixels, root } from './helpers.mjs';
+import { serve, convertOnPage, extractText, extractLinks, missingStrings, normalize, hasPdftoppm, pixelDiff, readPixels, root } from './helpers.mjs';
 
 /** @type {{name: string, variant: string|null}[]} */
 const CASES = [
@@ -624,4 +624,179 @@ test('画像は埋め込み後に解放され、次の変換では読み直さ�
   expect(result.releasedAfterFirst).toBe(true);
   // 読み直しが効いているので 2 回目も同じ内容になる
   expect(result.secondLen).toBe(result.firstLen);
+});
+
+/** リンクとしおりの検証用: 見出しと 3 種類のリンクを含む 2 ページの文書 */
+const LINK_DOC = {
+  css:
+    '@font-face{font-family:"BIZ UDPGothic";src:url("/fonts/BIZUDPGothic-Regular.ttf")}' +
+    '#d{font-family:"BIZ UDPGothic";font-size:11pt;width:180mm}p,h1,h2,h3{margin:0;line-height:18pt}',
+  build: (rows = 60) => {
+    let html = '<div id="d"><h1>請求書</h1>';
+    html += '<p><a href="https://example.com/pay/123">支払いページ</a>／<a href="mailto:info@example.com">お問い合わせ</a></p>';
+    html += '<p><a href="#terms">規約へ</a>／<a href="#missing">飛び先なし</a>／<a href="javascript:alert(1)">スクリプト</a></p>';
+    for (let i = 0; i < rows; i++) html += `<p>本文 ${i + 1}</p>`;
+    html += '<h2 id="terms">規約</h2><p>規約の本文</p><h3>細則</h3><p>細則の本文</p><h2>連絡先</h2><p>おわり</p></div>';
+    return html;
+  },
+};
+
+test('<a href> をリンク注釈にする（外部・mailto・文書内）', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(
+    async ({ css, html }) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
+      return Array.from(out);
+    },
+    { css: LINK_DOC.css, html: LINK_DOC.build() },
+  );
+
+  const { links, numPages, outline } = await extractLinks(bytes);
+  expect(numPages).toBe(2);
+
+  const urls = links.map((l) => l.url).filter(Boolean);
+  expect(urls).toContain('https://example.com/pay/123');
+  expect(urls).toContain('mailto:info@example.com');
+  // javascript: と、飛び先の無い #missing は注釈にしない
+  expect(urls.some((u) => /^javascript:/.test(u ?? ''))).toBe(false);
+  expect(links).toHaveLength(3);
+
+  // 文書内リンクは #terms が載っている 2 ページ目を指す
+  const internal = links.filter((l) => l.destPage !== null);
+  expect(internal).toHaveLength(1);
+  expect(internal[0]?.destPage).toBe(1);
+
+  // 注釈はすべて 1 ページ目（リンクを置いた位置）にあり、面積を持つ
+  for (const l of links) {
+    expect(l.page).toBe(0);
+    expect(l.rect[2] - l.rect[0]).toBeGreaterThan(1);
+    expect(l.rect[3] - l.rect[1]).toBeGreaterThan(1);
+  }
+
+  // outline: false（既定）ではしおりを作らない
+  expect(outline).toEqual([]);
+});
+
+test('outline: true で見出しからしおりを作る', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(
+    async ({ css, html }) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, outline: true, output: 'uint8array' });
+      return Array.from(out);
+    },
+    { css: LINK_DOC.css, html: LINK_DOC.build() },
+  );
+  const { outline } = await extractLinks(bytes);
+  // h1 > h2 > h3 の入れ子になる
+  expect(outline).toEqual([
+    { depth: 0, title: '請求書' },
+    { depth: 1, title: '規約' },
+    { depth: 2, title: '細則' },
+    { depth: 1, title: '連絡先' },
+  ]);
+});
+
+test('links: false でリンク注釈を作らない', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(
+    async ({ css, html }) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, links: false, output: 'uint8array' });
+      return Array.from(out);
+    },
+    { css: LINK_DOC.css, html: LINK_DOC.build() },
+  );
+  expect((await extractLinks(bytes)).links).toEqual([]);
+});
+
+test('ページ境界を跨ぐリンクは両ページに分けて出す', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    // 高さのあるブロックリンクを、ちょうどページ境界にかかる位置に置く
+    let html = '<div id="d">';
+    // 1 ページ目の途中から始まり、次のページまで続く高さにする
+    for (let i = 0; i < 30; i++) html += `<p>本文 ${i + 1}</p>`;
+    html += '<a class="big" href="https://example.com/long">またがるリンク</a>';
+    for (let i = 0; i < 10; i++) html += `<p>あと ${i + 1}</p>`;
+    html += '</div>';
+    const css =
+      '@font-face{font-family:"BIZ UDPGothic";src:url("/fonts/BIZUDPGothic-Regular.ttf")}' +
+      '#d{font-family:"BIZ UDPGothic";font-size:11pt;width:180mm}p{margin:0;line-height:18pt}' +
+      '.big{display:block;height:300pt;background:#eef}';
+    const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
+    return Array.from(out);
+  });
+
+  const { links } = await extractLinks(bytes);
+  const big = links.filter((l) => l.url === 'https://example.com/long');
+  expect(big).toHaveLength(2);
+  expect(big.map((l) => l.page)).toEqual([0, 1]);
+  // 切り取られた 2 つの高さを足すと元の高さ（300pt）に近い
+  const total = big.reduce((sum, l) => sum + (l.rect[3] - l.rect[1]), 0);
+  expect(total).toBeGreaterThan(290);
+  expect(total).toBeLessThan(310);
+});
+
+test('リンク注釈の矩形がその文字の上に重なる', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(
+    async ({ css, html }) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
+      return Array.from(out);
+    },
+    { css: LINK_DOC.css, html: LINK_DOC.build(0) },
+  );
+
+  const { links } = await extractLinks(bytes);
+  const pay = links.find((l) => l.url === 'https://example.com/pay/123');
+  expect(pay).toBeTruthy();
+
+  // 「支払いページ」のベースライン位置を取り出し、注釈の矩形に入っているか見る
+  const { positions } = await extractText(bytes);
+  const glyph = positions.find((t) => t.str.replace(/\s/g, '').startsWith('支払'));
+  expect(glyph, '「支払いページ」が抽出できる').toBeTruthy();
+  const rect = /** @type {number[]} */ (pay?.rect);
+  expect(glyph?.x).toBeGreaterThanOrEqual(rect[0] - 2);
+  expect(glyph?.x).toBeLessThanOrEqual(rect[2]);
+  expect(glyph?.y).toBeGreaterThanOrEqual(rect[1] - 2);
+  expect(glyph?.y).toBeLessThanOrEqual(rect[3] + 2);
+});
+
+test('フッターの中のリンクも注釈になる', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const bytes = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    let html = '<div id="d">';
+    for (let i = 0; i < 60; i++) html += `<p>本文 ${i + 1}</p>`;
+    html += '</div>';
+    const css =
+      '@font-face{font-family:"BIZ UDPGothic";src:url("/fonts/BIZUDPGothic-Regular.ttf")}' +
+      '#d{font-family:"BIZ UDPGothic";font-size:11pt;width:180mm}p{margin:0;line-height:18pt}';
+    const out = await lib.htmlToPdf(html, {
+      stylesheets: [css],
+      page: { size: 'A4', margin: '15mm' },
+      footer: '<div style="font-family:\'BIZ UDPGothic\';font-size:8pt;text-align:center"><a href="https://example.com/support">サポート</a> {{pageNumber}} / {{totalPages}}</div>',
+      output: 'uint8array',
+    });
+    return Array.from(out);
+  });
+
+  const { links, numPages } = await extractLinks(bytes);
+  const support = links.filter((l) => l.url === 'https://example.com/support');
+  // 全ページのフッターに 1 つずつ
+  expect(numPages).toBeGreaterThan(1);
+  expect(support).toHaveLength(numPages);
+  expect(support.map((l) => l.page)).toEqual(Array.from({ length: numPages }, (_, i) => i));
+  // フッター帯（下余白の上）に置かれている
+  for (const l of support) expect(l.rect[1]).toBeLessThan(100);
 });

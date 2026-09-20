@@ -20,7 +20,7 @@ export function resolvePage(page?: import("./index.js").PageOptions | undefined)
 /**
  * @param {import('./walker/walk.js').WalkResult} body
  * @param {PageGeometry} geo
- * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null, pacer?: import('./pacer.js').Pacer, progress?: (p: import('./index.js').ConversionProgress) => void, warn?: (w: import('./index.js').ConversionWarning) => void}} opts
+ * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null, pacer?: import('./pacer.js').Pacer, progress?: (p: import('./index.js').ConversionProgress) => void, warn?: (w: import('./index.js').ConversionWarning) => void, links?: boolean, outline?: boolean}} opts
  * @returns {Promise<Uint8Array>}
  */
 export function buildPdf(body: import("./walker/walk.js").WalkResult, geo: PageGeometry, opts: {
@@ -31,6 +31,8 @@ export function buildPdf(body: import("./walker/walk.js").WalkResult, geo: PageG
     pacer?: import("./pacer.js").Pacer;
     progress?: (p: import("./index.js").ConversionProgress) => void;
     warn?: (w: import("./index.js").ConversionWarning) => void;
+    links?: boolean;
+    outline?: boolean;
 }): Promise<Uint8Array>;
 export type PageGeometry = {
     /**

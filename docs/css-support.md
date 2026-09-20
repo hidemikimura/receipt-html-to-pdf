@@ -128,6 +128,21 @@ await document.fonts.ready;
 const pdf = await htmlToPdf(document.querySelector('my-receipt'));
 ```
 
+## リンクとしおり
+
+| 対象 | 対応 | 備考 |
+|---|---|---|
+| `<a href="https://…">` / `mailto:` / `tel:` | ✅ | PDF のリンク注釈（`/Annot /Link`）にする。相対 URL は `baseUrl` で解決。既定の枠線は消す |
+| `<a href="#id">`（文書内リンク） | ✅ | 飛び先の要素が載るページへ `/Dest [page /XYZ]` で飛ぶ。`<a name="…">` も飛び先になる。飛び先が無ければ注釈にしない |
+| `javascript:` など | ❌ | 注釈にしない |
+| 折り返したインラインリンク | ✅ | 行ごとに注釈を作る |
+| ページ境界を跨ぐリンク | ✅ | ページごとに切り取って両方に注釈を作る |
+| `transform` の中のリンク | ⚠️ | PDF の注釈は軸並行の矩形しか持てないので、外接矩形で近似する |
+| ヘッダー／フッターの中のリンク | ✅ | 各ページに作る |
+| しおり（`/Outlines`） | ⚠️ | `outline: true` のときだけ、`h1`〜`h6` の入れ子から作る（既定は作らない） |
+
+リンク注釈は既定で有効。止めるなら `links: false`。
+
 ## フォントファイル
 
 | 形式 | 対応 |

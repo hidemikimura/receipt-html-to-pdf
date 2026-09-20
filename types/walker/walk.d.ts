@@ -179,12 +179,34 @@ export type Join = {
     end: number;
     pullTo: number;
 };
+/**
+ * <a href> の 1 行ぶんの当たり判定（ドキュメント px）
+ */
+export type LinkRect = {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    href: string;
+    fragment: string | null;
+};
+/**
+ * しおり用の見出し
+ */
+export type Heading = {
+    level: number;
+    text: string;
+    y: number;
+};
 export type WalkResult = {
     items: DisplayItem[];
     atoms: Atom[];
     breaks: number[];
     joins: Join[];
     tables: TableInfo[];
+    links: LinkRect[];
+    anchors: Map<string, number>;
+    headings: Heading[];
     height: number;
 };
 export type WalkContext = {

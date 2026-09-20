@@ -11,6 +11,7 @@ import { PX_TO_PT, PAGE_SIZES, lengthToPt, num } from './units.js';
 import { paginate } from './paginate.js';
 import { releasePixels, loadImage } from './walker/image.js';
 import { buildAxialShading, uniformAlpha, buildAlphaMaskGState } from './pdf/shading.js';
+import { buildLinkAnnot, buildOutline } from './pdf/outline.js';
 
 /**
  * @typedef {object} PageGeometry
@@ -58,7 +59,7 @@ export function resolvePage(page = {}) {
 /**
  * @param {import('./walker/walk.js').WalkResult} body
  * @param {PageGeometry} geo
- * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null, pacer?: import('./pacer.js').Pacer, progress?: (p: import('./index.js').ConversionProgress) => void, warn?: (w: import('./index.js').ConversionWarning) => void}} opts
+ * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null, pacer?: import('./pacer.js').Pacer, progress?: (p: import('./index.js').ConversionProgress) => void, warn?: (w: import('./index.js').ConversionWarning) => void, links?: boolean, outline?: boolean}} opts
  * @returns {Promise<Uint8Array>}
  */
 export async function buildPdf(body, geo, opts) {
@@ -177,6 +178,26 @@ export async function buildPdf(body, geo, opts) {
   const pagesRef = writer.reserve();
   /** @type {import('./pdf/writer.js').Ref[]} */
   const pageRefs = [];
+  // リンクの飛び先は前後どちらのページにもなりうるので、ページ参照を先に確保しておく
+  const pageSlots = Array.from({ length: totalPages }, () => writer.reserve());
+  /** @param {number} i @returns {import('./pdf/writer.js').Ref} */
+  const slotOf = (i) => /** @type {import('./pdf/writer.js').Ref} */ (pageSlots[i]);
+
+  /**
+   * ドキュメント y が載るページと、そのページでの PDF 座標を求める。
+   * @param {number} docY
+   * @returns {{page: number, x: number, y: number}|null}
+   */
+  const locate = (docY) => {
+    for (let i = 0; i < totalPages; i++) {
+      const r = /** @type {import('./paginate.js').PageRange} */ (ranges[i]);
+      if (docY >= r.start - 0.01 && (docY < r.end - 0.01 || i === totalPages - 1)) {
+        const top = contentTop - r.headShift * PX_TO_PT;
+        return { page: i, x: geo.left, y: top - (docY - r.start) * PX_TO_PT };
+      }
+    }
+    return null;
+  };
 
   // 4. ページごとに描画
   opts.progress?.({ phase: 'layout', totalPages });
@@ -236,26 +257,85 @@ export async function buildPdf(body, geo, opts) {
       cs.restore();
     }
 
+    // リンク注釈。ページ範囲で切り取ってから用紙座標へ写す
+    /** @type {import('./pdf/writer.js').PdfValue[]} */
+    const annots = [];
+    if (opts.links !== false) {
+      /**
+       * @param {import('./walker/walk.js').LinkRect[]} list
+       * @param {number} pdfTop   この帯の上端（PDF 座標）
+       * @param {number} docTop   その位置に対応するドキュメント y
+       * @param {number} docEnd   この帯に出せるドキュメント y の終わり
+       */
+      const addLinks = (list, pdfTop, docTop, docEnd) => {
+        for (const link of list) {
+          const y0 = Math.max(link.y, docTop);
+          const y1 = Math.min(link.y + link.h, docEnd);
+          if (y1 - y0 <= 0.01) continue;
+          const rect = {
+            x: geo.left + link.x * PX_TO_PT,
+            y: pdfTop - (y1 - docTop) * PX_TO_PT,
+            w: link.w * PX_TO_PT,
+            h: (y1 - y0) * PX_TO_PT,
+          };
+          if (link.fragment === null) {
+            annots.push(buildLinkAnnot(writer, rect, { uri: link.href }));
+            continue;
+          }
+          const targetY = body.anchors?.get(link.fragment);
+          if (targetY === undefined) continue; // 飛び先が無いリンクは注釈にしない
+          const at = locate(targetY);
+          if (!at) continue;
+          annots.push(buildLinkAnnot(writer, rect, { dest: [slotOf(at.page), new Name('XYZ'), at.x, at.y, null] }));
+        }
+      };
+      addLinks(body.links ?? [], contentTop - bodyShiftPt, range.start, range.end);
+      if (header) addLinks(header.links ?? [], geo.height - geo.top, 0, headerPt / PX_TO_PT);
+      if (footer) addLinks(footer.links ?? [], geo.bottom + footerPt, 0, footerPt / PX_TO_PT);
+    }
+
     const contentRef = await writer.addStream({}, cs.toBytes());
-    pageRefs.push(
-      writer.add({
-        Type: 'Page',
-        Parent: pagesRef,
-        MediaBox: [0, 0, geo.width, geo.height],
-        Resources: {
-          Font: fontDict,
-          XObject: xobjDict,
-          ExtGState: gstateDict,
-          Shading: shadingDict,
-          ProcSet: [new Name('PDF'), new Name('Text'), new Name('ImageC')],
-        },
-        Contents: contentRef,
+    /** @type {{[key: string]: import('./pdf/writer.js').PdfValue}} */
+    const pageDict = {
+      Type: 'Page',
+      Parent: pagesRef,
+      MediaBox: [0, 0, geo.width, geo.height],
+      Resources: {
+        Font: fontDict,
+        XObject: xobjDict,
+        ExtGState: gstateDict,
+        Shading: shadingDict,
+        ProcSet: [new Name('PDF'), new Name('Text'), new Name('ImageC')],
+      },
+      Contents: contentRef,
+    };
+    if (annots.length) pageDict.Annots = annots;
+    const slot = slotOf(p);
+    writer.set(slot, pageDict);
+    pageRefs.push(slot);
+  }
+
+  writer.set(pagesRef, { Type: 'Pages', Kids: pageRefs, Count: pageRefs.length });
+
+  // しおり: 見出しから木を作る
+  let outlineRef = null;
+  if (opts.outline) {
+    outlineRef = buildOutline(
+      writer,
+      (body.headings ?? []).map((h) => {
+        const at = locate(h.y);
+        return { level: h.level, text: h.text, dest: at ? [slotOf(at.page), new Name('XYZ'), at.x, at.y, null] : null };
       }),
     );
   }
 
-  writer.set(pagesRef, { Type: 'Pages', Kids: pageRefs, Count: pageRefs.length });
-  const catalog = writer.add({ Type: 'Catalog', Pages: pagesRef });
+  /** @type {{[key: string]: import('./pdf/writer.js').PdfValue}} */
+  const catalogDict = { Type: 'Catalog', Pages: pagesRef };
+  if (outlineRef) {
+    catalogDict.Outlines = outlineRef;
+    catalogDict.PageMode = new Name('UseOutlines');
+  }
+  const catalog = writer.add(catalogDict);
 
   const md = opts.metadata ?? {};
   /** @type {{[key: string]: import('./pdf/writer.js').PdfValue}} */

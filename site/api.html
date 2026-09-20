@@ -36,6 +36,7 @@
       <li><a href="#options">ConvertOptions</a></li>
       <li><a href="#page">ページ設定</a></li>
       <li><a href="#headerfooter">ヘッダーとフッター</a></li>
+      <li><a href="#links">リンクとしおり</a></li>
       <li><a href="#progress">進捗と長い文書</a></li>
       <li><a href="#warning">警告の種類</a></li>
       <li><a href="#others">その他の関数</a></li>
@@ -54,25 +55,25 @@ import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf/min';
   <p>npm や バンドラーを使わず、HTML に <code>&lt;script type="module"&gt;</code> を 1 つ置くだけで動きます。<code>dist/</code> の minify 済みファイルは依存ゼロの単一 ESM なので、jsDelivr や unpkg の URL をそのまま読めます。</p>
   <pre><code>&lt;script type="module"&gt;
   import { registerFont, htmlToPdf, downloadPdf }
-    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.4.0/dist/receipt-html-to-pdf.min.js';
 
   await registerFont({ family: 'BIZ UDPGothic', src: '/fonts/BIZUDPGothic-Regular.ttf' });
   downloadPdf(await htmlToPdf(document.querySelector('#receipt')), 'receipt.pdf');
 &lt;/script&gt;</code></pre>
   <div class="note">
-    <p><strong>バージョンは固定する</strong>のが安全です。<code>@0.3.0</code> を外すと最新版が読み込まれ、更新のたびに挙動が変わる可能性があります。</p>
+    <p><strong>バージョンは固定する</strong>のが安全です。<code>@0.4.0</code> を外すと最新版が読み込まれ、更新のたびに挙動が変わる可能性があります。</p>
   </div>
   <p>unpkg でも同じです。<code>esm.sh</code> は依存の解決までしてくれますが、このライブラリは依存ゼロなので、上のように <code>dist/</code> を直接指すのが一番速く読み込めます。</p>
   <pre><code>&lt;script type="module"&gt;
   import { registerFont, htmlToPdf }
-    from 'https://unpkg.com/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
+    from 'https://unpkg.com/@hidemikimura/receipt-html-to-pdf@0.4.0/dist/receipt-html-to-pdf.min.js';
 &lt;/script&gt;</code></pre>
 
   <h3 id="global">通常の &lt;script&gt; から使う</h3>
   <p>グローバル変数を配るビルド（IIFE / UMD）は用意していませんが、モジュールスクリプトを 1 行挟めば <code>window</code> に載せられます。以降は <code>type="module"</code> でない普通のスクリプトやインラインの <code>onclick</code> からも呼べます。</p>
   <pre><code>&lt;script type="module"&gt;
   import * as ReceiptHtmlToPdf
-    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.4.0/dist/receipt-html-to-pdf.min.js';
   window.ReceiptHtmlToPdf = ReceiptHtmlToPdf;
   await ReceiptHtmlToPdf.registerFont({ family: 'BIZ UDPGothic', src: '/fonts/BIZUDPGothic-Regular.ttf' });
   document.dispatchEvent(new Event('rhtp-ready'));
@@ -127,6 +128,8 @@ import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf/min';
       <tr><td><code>output</code></td><td><code>'blob' | 'uint8array' | 'dataurl'</code></td><td><code>'blob'</code></td><td>返り値の形式</td></tr>
       <tr><td><code>textMeasure</code></td><td><code>'auto' | 'font' | 'measure'</code></td><td><code>'auto'</code></td><td>グリフ位置の決め方。現在はどれを指定しても実測です</td></tr>
       <tr><td><code>onWarning</code></td><td><code>(w) =&gt; void</code></td><td>—</td><td>未対応 CSS・欠落グリフ・画像失敗の通知。<strong>必ず配線してください</strong></td></tr>
+      <tr><td><code>links</code></td><td><code>true</code></td><td><code>&lt;a href&gt;</code> を PDF のリンク注釈にする（外部 URL・<code>mailto:</code>・文書内 <code>#id</code>）</td></tr>
+      <tr><td><code>outline</code></td><td><code>false</code></td><td><code>h1</code>〜<code>h6</code> からしおり（PDF の目次）を作る</td></tr>
       <tr><td><code>onProgress</code></td><td>—</td><td>進み具合の通知。<code>render</code> → <code>walk</code> → <code>layout</code>（<code>totalPages</code> 確定）→ <code>page</code>（1 ページずつ）→ <code>done</code></td></tr>
     </tbody>
   </table>
@@ -146,6 +149,23 @@ import { registerFont, htmlToPdf } from '@hidemikimura/receipt-html-to-pdf/min';
   <p>本文とは別の HTML として各ページに合成されます。<code>{{pageNumber}}</code> と <code>{{totalPages}}</code> が置換されます。</p>
   <pre><code>footer: '&lt;div style="text-align:center;font-size:8pt"&gt;{{pageNumber}} / {{totalPages}}&lt;/div&gt;'</code></pre>
   <p>高さは 1 ページ目相当の内容で 1 回だけ測り、全ページ共通とみなします。ヘッダー／フッターを付けたぶん本文領域は縮むので、ページ数が変わることがあります。フォントは本文と同じレジストリから引かれるので、テンプレート側でも <code>font-family</code> を指定してください。</p>
+
+  <h2 id="links">リンクとしおり</h2>
+  <p><code>&lt;a href&gt;</code> は既定で PDF のリンク注釈になります。外部 URL、<code>mailto:</code> / <code>tel:</code>、文書内の <code>#id</code> に対応します。折り返した行やページを跨ぐリンクは分割して注釈を作り、ヘッダー／フッターの中のリンクも各ページに出ます。</p>
+  <table>
+    <thead><tr><th>書き方</th><th>PDF での挙動</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt;a href="https://example.com/pay"&gt;</code></td><td>クリックでその URL を開く</td></tr>
+      <tr><td><code>&lt;a href="mailto:info@example.com"&gt;</code></td><td>メール作成を開く</td></tr>
+      <tr><td><code>&lt;a href="#terms"&gt;</code></td><td><code>id="terms"</code> の要素が載っているページへ飛ぶ</td></tr>
+      <tr><td><code>&lt;a href="javascript:…"&gt;</code></td><td>注釈にしない</td></tr>
+    </tbody>
+  </table>
+  <p>止めるなら <code>links: false</code>。相対 URL は <code>baseUrl</code> で解決します。<code>transform</code> の中のリンクは、PDF の注釈が軸並行の矩形しか持てないため外接矩形で近似します。</p>
+
+  <h3 id="outline">しおり</h3>
+  <p><code>outline: true</code> を渡すと、<code>h1</code>〜<code>h6</code> の入れ子からしおり（ビューアのサイドバーに出る目次）を作ります。長い明細書で便利です。既定では作りません。</p>
+  <pre><code>await htmlToPdf(el, { outline: true });</code></pre>
 
   <h2 id="progress">進捗と長い文書</h2>
   <p>変換は途中でイベントループへ戻すので、数百ページの文書でも画面が固まりません（所要時間は 1 割ほど増えます）。進捗表示を出すなら <code>onProgress</code> を配線します。</p>

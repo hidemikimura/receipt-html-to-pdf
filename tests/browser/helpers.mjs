@@ -62,6 +62,8 @@ export async function convertOnPage(page, expected, variant) {
 export async function extractText(bytes) {
   const pdf = await getDocument({ data: new Uint8Array(bytes), useSystemFonts: false, disableFontFace: true, verbosity: 0 }).promise;
   const pages = [];
+  /** @type {{page: number, str: string, x: number, y: number}[]} 文字列ごとの描き出し位置（PDF 座標） */
+  const positions = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const content = await (await pdf.getPage(p)).getTextContent();
     let text = '';
@@ -72,11 +74,12 @@ export async function extractText(bytes) {
       if (lastY !== null && Math.abs(y - lastY) > 1) text += '\n';
       text += item.str;
       lastY = y;
+      positions.push({ page: p - 1, str: item.str, x: item.transform[4], y });
     }
     pages.push(text);
   }
   const info = (await pdf.getMetadata()).info;
-  return { pages, numPages: pdf.numPages, title: info.Title };
+  return { pages, numPages: pdf.numPages, title: info.Title, positions };
 }
 
 export const normalize = (s) => s.replace(/[ 　\t]+/g, ' ').trim();
@@ -174,4 +177,32 @@ export async function readPixels(path) {
       return [png.data[i], png.data[i + 1], png.data[i + 2]];
     },
   };
+}
+
+/**
+ * リンク注釈としおりを取り出す。
+ * 文書内リンクの飛び先は 0 始まりのページ番号に解決する。
+ * @param {number[]|Uint8Array} bytes
+ */
+export async function extractLinks(bytes) {
+  const pdf = await getDocument({ data: new Uint8Array(bytes), useSystemFonts: false, disableFontFace: true, verbosity: 0 }).promise;
+  /** @type {{page: number, url: string|null, destPage: number|null, rect: number[]}[]} */
+  const links = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    for (const a of await (await pdf.getPage(p)).getAnnotations()) {
+      if (a.subtype !== 'Link') continue;
+      let destPage = null;
+      if (a.dest && Array.isArray(a.dest) && a.dest[0]) {
+        try {
+          destPage = await pdf.getPageIndex(a.dest[0]);
+        } catch {
+          destPage = null;
+        }
+      }
+      links.push({ page: p - 1, url: a.url ?? null, destPage, rect: (a.rect ?? []).map((v) => Math.round(v)) });
+    }
+  }
+  /** @param {any[]|null} nodes @param {number} depth */
+  const flat = (nodes, depth = 0) => (nodes ?? []).flatMap((n) => [{ depth, title: n.title }, ...flat(n.items, depth + 1)]);
+  return { links, outline: flat(await pdf.getOutline()), numPages: pdf.numPages };
 }

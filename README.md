@@ -10,8 +10,8 @@
 
 **ドキュメント: https://hidemikimura.github.io/receipt-html-to-pdf/** （[デモ](https://hidemikimura.github.io/receipt-html-to-pdf/demo.html) / [API リファレンス](https://hidemikimura.github.io/receipt-html-to-pdf/api.html) / [対応 CSS 一覧](https://hidemikimura.github.io/receipt-html-to-pdf/css.html)）
 
-> **v0.3.0** — テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・シャドウ DOM（Web Components）・複数ページに加え、**`linear-gradient`**・**インライン `<svg>` のベクター変換**・**`background-repeat`**・**GSUB の単一置換**・**`break-before/after: avoid`** に対応。長い文書では途中でイベントループへ戻すので画面が固まらず、`onProgress` で進捗を出せる。依存ゼロ、minify バンドルは gzip 26KB。
-> Chromium / Firefox / WebKit の 3 ブラウザで Playwright テスト（テキスト抽出・ページ分割・画素差分）に合格。対応 CSS は [docs/css-support.md](docs/css-support.md)、設計と経緯は [docs/design.md](docs/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md)。
+> **v0.4.0** — テキスト・背景・ボーダー・画像・角丸・2D transform・擬似要素・`overflow: hidden`・シャドウ DOM（Web Components）・`linear-gradient`・インライン `<svg>` のベクター変換・`background-repeat`・GSUB の単一置換・複数ページに加え、**リンク注釈**（外部 URL・`mailto:`・文書内 `#id`）と**しおり**（`outline: true`）に対応。長い文書では途中でイベントループへ戻すので画面が固まらず、`onProgress` で進捗を出せる。依存ゼロ、minify バンドルは gzip 28KB。
+> Chromium / Firefox / WebKit の 3 ブラウザで Playwright テスト（テキスト抽出・ページ分割・画素差分・注釈）に合格。対応 CSS は [docs/css-support.md](docs/css-support.md)、設計と経緯は [docs/design.md](docs/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使い方
 
@@ -39,7 +39,7 @@ downloadPdf(pdf, 'receipt.pdf');
 | `downloadPdf(pdf, filename)` | ブラウザでダウンロードさせる補助 |
 | `listFonts()` / `version` | 登録済みフォントの一覧、ライブラリのバージョン |
 
-主なオプション（`ConvertOptions`、型は `types/index.d.ts`）: `page: { size, orientation, margin }`、`header` / `footer`（`{{pageNumber}}` `{{totalPages}}`）、`stylesheets: 'inherit' | 'none' | [url または CSS 文字列]`、`mediaPrint`、`fontFallback`、`metadata`、`compress`、`baseUrl`、`onWarning`、`onProgress`。
+主なオプション（`ConvertOptions`、型は `types/index.d.ts`）: `page: { size, orientation, margin }`、`header` / `footer`（`{{pageNumber}}` `{{totalPages}}`）、`stylesheets: 'inherit' | 'none' | [url または CSS 文字列]`、`mediaPrint`、`fontFallback`、`metadata`、`compress`、`baseUrl`、`links`（既定 true、`<a href>` をリンク注釈にする）、`outline`（既定 false、見出しからしおりを作る）、`onWarning`、`onProgress`。
 
 長い文書でも画面が固まらないよう、変換は途中でイベントループへ戻る。進捗表示を出すなら `onProgress` を使う。
 
@@ -66,14 +66,14 @@ npm install @hidemikimura/receipt-html-to-pdf
 ```html
 <script type="module">
   import { registerFont, htmlToPdf, downloadPdf }
-    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.4.0/dist/receipt-html-to-pdf.min.js';
 
   await registerFont({ family: 'BIZ UDPGothic', src: '/fonts/BIZUDPGothic-Regular.ttf' });
   downloadPdf(await htmlToPdf(document.querySelector('#receipt')), 'receipt.pdf');
 </script>
 ```
 
-バージョン（`@0.3.0`）は固定すること。unpkg でも同じ。グローバル変数を配るビルド（IIFE / UMD）は用意していないが、`import * as ReceiptHtmlToPdf` して `window` に載せれば `type="module"` でない普通のスクリプトからも呼べる。ファイル 1 つで動く一式は [`examples/cdn.html`](examples/cdn.html)。
+バージョン（`@0.4.0`）は固定すること。unpkg でも同じ。グローバル変数を配るビルド（IIFE / UMD）は用意していないが、`import * as ReceiptHtmlToPdf` して `window` に載せれば `type="module"` でない普通のスクリプトからも呼べる。ファイル 1 つで動く一式は [`examples/cdn.html`](examples/cdn.html)。
 
 ## 開発
 
@@ -101,7 +101,7 @@ brew install qpdf                                # 任意: 生成 PDF の構造�
 
 CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイズ検査の後、3 ブラウザ並列でブラウザテストを流し、生成された PDF を `qpdf --check` で検証する。
 
-## 対応範囲（v0.3.0）
+## 対応範囲（v0.4.0）
 
 | 対応 | 未対応（onWarning で通知） |
 |---|---|
@@ -110,6 +110,7 @@ CI（`.github/workflows/ci.yml`）は typecheck → 単体テスト → サイ�
 | `<img>`（PNG 透過 / JPEG、`object-fit`）、`background-image: url()`（size / position）、`overflow: hidden` のクリップ、**インライン `<svg>` のベクター変換**（パス・基本図形・塗り・線・破線・変換行列） | SVG の `<text>` / `<use>` / paint server（警告）、`<img src="x.svg">` はラスタライズ |
 | `transform`（2D、`transform-origin`）、`::before` / `::after`（文字列 content） | 3D transform、`counter()` / `url()` content |
 | 複数ページ: 行・`tr`・`thead`・`tfoot`・`<img>`・`break-inside: avoid` を跨がない分割、`break-before/after: page`、`break-before/after: avoid`（隣の箱と同じページに保つ）、`thead` / `tfoot` の各ページ繰り返し、`header` / `footer` テンプレート（`{{pageNumber}}` `{{totalPages}}`） | `orphans` / `widows`、ページ番号による高さ変化 |
+| リンク注釈（`<a href>` の外部 URL・`mailto:`・文書内 `#id`、ページ跨ぎは分割）、`outline: true` で `h1`〜`h6` からしおり | `transform` 内のリンクは外接矩形で近似、`javascript:` は無視 |
 | Web Components: シャドウ DOM のホスト要素をそのまま変換（宣言的シャドウ DOM で直列化）、`<slot>` の割り当て、`:host` / `::slotted()`、`adoptedStyleSheets`、`:defined` | `closed` なシャドウルート、`Element.getHTML()` の無いブラウザ（警告して light DOM のみ） |
 | レイアウト全般（Flexbox / Grid / テーブル / 禁則 / letter-spacing）はブラウザ計算をそのまま利用 | |
 
@@ -149,7 +150,7 @@ npm run site:dev    # 組み立てて http://localhost:5174 で表示
 2. `npm run pack:check` で tarball の内容を確認する（`files` で許可リスト管理。フォント・フィクスチャ・テストは含まれない）
 3. `npm login`（スコープ `@hidemikimura` の所有者アカウント）
 4. `npm publish` — `prepublishOnly` が typecheck → 単体テスト → `.d.ts` 生成 → minify ビルド + サイズ検査を自動で流す。`publishConfig.access` が `public` なのでスコープ付きでも無料で公開される
-5. `git tag v0.3.0 && git push --tags`
+5. `git tag v0.4.0 && git push --tags`
 
 ## ライセンス
 

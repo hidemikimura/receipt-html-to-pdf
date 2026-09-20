@@ -32,7 +32,9 @@ import { shapeToPath } from './svg-path.js';
  * @typedef {{top: number, bottom: number}} Atom  ページ境界を跨いではいけない縦範囲（行・表の行・画像・break-inside: avoid）
  * @typedef {{top: number, bottom: number, headTop: number, headBottom: number, headItems: DisplayItem[], footTop: number, footBottom: number, footItems: DisplayItem[]}} TableInfo
  * @typedef {{start: number, end: number, pullTo: number}} Join  break-before/after: avoid — [start, end] に境界を置かず、置きそうなら pullTo まで戻す
- * @typedef {{items: DisplayItem[], atoms: Atom[], breaks: number[], joins: Join[], tables: TableInfo[], height: number}} WalkResult
+ * @typedef {{x: number, y: number, w: number, h: number, href: string, fragment: string|null}} LinkRect  <a href> の 1 行ぶんの当たり判定（ドキュメント px）
+ * @typedef {{level: number, text: string, y: number}} Heading  しおり用の見出し
+ * @typedef {{items: DisplayItem[], atoms: Atom[], breaks: number[], joins: Join[], tables: TableInfo[], links: LinkRect[], anchors: Map<string, number>, headings: Heading[], height: number}} WalkResult
  */
 
 /**
@@ -107,6 +109,12 @@ export async function walk(root, ctx) {
   const breaks = [];
   /** @type {Join[]} */
   const joins = [];
+  /** @type {LinkRect[]} */
+  const links = [];
+  /** @type {Map<string, number>} 文書内リンクの飛び先: id → ドキュメント y */
+  const anchors = new Map();
+  /** @type {Heading[]} */
+  const headings = [];
   /** @type {TableInfo[]} */
   const tables = [];
   /** @type {TableInfo|null} 走査中のテーブル（thead の描画命令を記録する先） */
@@ -223,6 +231,8 @@ export async function walk(root, ctx) {
         }
       }
     }
+    collectLinkAndOutline(el, style);
+
     /** @type {TableInfo|null} */
     let openedTable = null;
     if (style.display === 'table' || style.display === 'inline-table') {
@@ -759,6 +769,53 @@ export async function walk(root, ctx) {
   }
 
   /**
+   * リンク注釈としおりの材料を集める。
+   *
+   * 描画命令ではないので DisplayList には入れず、WalkResult に別で持つ。
+   * `getClientRects()` は transform 適用後の矩形を返すので、変形の中のリンクも
+   * そのまま外接矩形として扱える（PDF の注釈は軸並行の矩形しか持てない）。
+   *
+   * @param {Element} el
+   * @param {CSSStyleDeclaration} style
+   */
+  function collectLinkAndOutline(el, style) {
+    // 飛び先になりうる id を記録する（<a name> も含む）
+    const id = el.id || (el.tagName === 'A' ? el.getAttribute('name') : null);
+    if (id && !anchors.has(id)) {
+      const r = el.getBoundingClientRect();
+      anchors.set(id, r.top + sy);
+    }
+
+    if (/^H[1-6]$/.test(el.tagName)) {
+      const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ');
+      if (text) headings.push({ level: Number(el.tagName[1]), text, y: el.getBoundingClientRect().top + sy });
+    }
+
+    if (el.tagName !== 'A') return;
+    const href = el.getAttribute('href');
+    if (!href) return;
+    if (style.visibility !== 'visible') return;
+    // 同じ文書内へのリンクは飛び先の id を覚えておき、ページが決まってから解決する
+    const fragment = href.startsWith('#') ? decodeURIComponent(href.slice(1)) : null;
+    /** @type {string} */
+    let uri = href;
+    if (!fragment) {
+      try {
+        uri = new URL(href, el.ownerDocument.baseURI).href;
+      } catch {
+        return; // 解決できない href は注釈にしない
+      }
+      // javascript: などは注釈にしない
+      if (!/^(https?|mailto|tel|ftp|file):/i.test(uri)) return;
+    }
+    // インラインで折り返していると行ごとに矩形が返る
+    for (const r of el.getClientRects()) {
+      if (r.width <= 0 || r.height <= 0) continue;
+      links.push({ x: r.left + sx, y: r.top + sy, w: r.width, h: r.height, href: uri, fragment });
+    }
+  }
+
+  /**
    * overflow クリップを閉じる。範囲外の命令は捨てる（クリップで消えた文字が抽出テキストに残らないように）。
    * @param {Box} clipBox
    * @param {DisplayItem[]} saved
@@ -834,7 +891,7 @@ export async function walk(root, ctx) {
     return null;
   }
 
-  return { items: rootItems, atoms, breaks, joins, tables, height };
+  return { items: rootItems, atoms, breaks, joins, tables, links, anchors, headings, height };
 }
 
 /** @param {DisplayItem[]} items */

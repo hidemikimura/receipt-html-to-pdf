@@ -45,7 +45,7 @@ npm を使わない場合は CDN の URL をそのまま `import` できる（`d
 ```html
 <script type="module">
   import { registerFont, htmlToPdf, downloadPdf }
-    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.4.0/dist/receipt-html-to-pdf.min.js';
 </script>
 ```
 
@@ -92,6 +92,8 @@ npm を使わない場合は CDN の URL をそのまま `import` できる（`d
 | `baseUrl` | 現在の文書 | 相対 URL（フォント・画像）の基準 |
 | `output` | `'blob'` | `'uint8array'` `'dataurl'` |
 | `onWarning` | — | 未対応 CSS・欠落グリフ・画像失敗の通知。**必ず配線する** |
+| `links` | `true` | `<a href>` を PDF のリンク注釈にする（外部 URL・`mailto:`・文書内 `#id`） |
+| `outline` | `false` | `h1`〜`h6` からしおり（PDF の目次）を作る |
 | `onProgress` | — | `render` → `walk` → `layout`（`totalPages` 確定）→ `page`（1 ページずつ）→ `done`。長い文書の進捗表示に使う |
 
 ## 対応している CSS の要点
@@ -128,6 +130,12 @@ footer: '<div style="text-align:center;font-size:8pt">{{pageNumber}} / {{totalPa
 ```
 
 `orphans` / `widows` / `@page` は未対応。用紙サイズと余白は `options.page` で指定する。
+
+## リンクとしおり
+
+`<a href>` は既定で PDF のリンク注釈になる（外部 URL・`mailto:` / `tel:`・文書内 `#id`）。折り返した行やページを跨ぐリンクは分割して注釈を作り、ヘッダー／フッターの中のリンクも各ページに出る。`javascript:` と、飛び先の無い `#id` は注釈にしない。止めるなら `links: false`。
+
+`outline: true` を渡すと `h1`〜`h6` の入れ子からしおり（ビューアのサイドバーに出る目次）を作る。長い明細書で便利。既定では作らない。
 
 ## 長い文書
 

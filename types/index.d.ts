@@ -95,6 +95,8 @@ export { expandPrintMediaCss } from "./renderer.js";
  * @property {'blob'|'uint8array'|'dataurl'} [output='blob']
  * @property {string} [baseUrl]                  相対 URL（フォント・画像）の基準。既定は現在の文書
  * @property {(warning: ConversionWarning) => void} [onWarning]
+ * @property {boolean} [links=true]     `<a href>` を PDF のリンク注釈にする
+ * @property {boolean} [outline=false]  見出し（h1〜h6）からしおり（PDF の目次）を作る
  * @property {(progress: ConversionProgress) => void} [onProgress]  進捗通知。長い文書では途中でイベントループへ戻すので、UI を更新できる
  */
 /**
@@ -102,7 +104,7 @@ export { expandPrintMediaCss } from "./renderer.js";
  * @typedef {Element|string} ConvertInput
  */
 /** ライブラリのバージョン（package.json と同期） */
-export const version: "0.3.0";
+export const version: "0.4.0";
 /**
  * 登録するフォントの定義。
  * `src` は TrueType アウトライン（glyf）を持つ静的 TTF のみ対応。
@@ -214,6 +216,14 @@ export type ConvertOptions = {
      */
     baseUrl?: string | undefined;
     onWarning?: ((warning: ConversionWarning) => void) | undefined;
+    /**
+     * `<a href>` を PDF のリンク注釈にする
+     */
+    links?: boolean | undefined;
+    /**
+     * 見出し（h1〜h6）からしおり（PDF の目次）を作る
+     */
+    outline?: boolean | undefined;
     /**
      * 進捗通知。長い文書では途中でイベントループへ戻すので、UI を更新できる
      */
