@@ -266,17 +266,39 @@ test('親文書の body マージンは PDF に持ち込まれない', async ({ 
   expect(warnings).toEqual([]);
 });
 
-test('break-after: avoid — 見出しがページ末尾に取り残されない', async ({ page }) => {
+test('break-after: avoid — 見出しがページ末尾に取り残されない', async ({ page }, testInfo) => {
   await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
 
+  const CSS =
+    '#doc{font-family:"BIZ UDPGothic";font-size:12pt;width:180mm}' +
+    'p{margin:0;line-height:16pt}' +
+    'h2{margin:0;font-size:12pt;line-height:16pt}';
+
+  // 1 ページに入る行数はブラウザの行の高さの丸め方で変わるので、ブラウザ自身に測らせる。
+  // 見出しが 1 ページ目の最後の行になるのは「本文が (入る行数 - 1) 行」のとき。
+  const boundaryRows = await page.evaluate(async (CSS) => {
+    await document.fonts.ready;
+    const probe = document.createElement('div');
+    probe.id = 'doc';
+    probe.style.cssText = 'position:absolute;left:-99999px;top:0';
+    probe.innerHTML = `<style>${CSS}</style><p>行</p>`;
+    document.body.appendChild(probe);
+    const lineH = /** @type {HTMLElement} */ (probe.querySelector('p')).getBoundingClientRect().height;
+    probe.remove();
+    // A4 の高さ 841.89pt から上下余白 15mm（42.52pt）を引いた本文領域を px にする
+    const contentPx = (841.89 - 2 * 42.52) / 0.75;
+    return Math.floor(contentPx / lineH) - 1;
+  }, CSS);
+  expect(boundaryRows, '1 ページに入る行数が測れる').toBeGreaterThan(10);
+  testInfo.annotations.push({ type: 'boundary', description: `見出しが 1 ページ目の最後に来る本文行数 = ${boundaryRows}` });
+
   /**
-   * 見出しの前に置く本文の行数を変えて変換し、見出しと次の段落がそれぞれ何ページ目に載るかを返す。
-   * 1 ページに何行入るかはブラウザの行の高さの丸め方で変わるので、
-   * 「ちょうど末尾に来る行数」を決め打ちにせず、境界の前後を掃いて調べる。
+   * 見出しの前に置く本文の行数を変えて変換し、見出しと次の段落が何ページ目に載るかを返す。
+   * @param {number} rows @param {boolean} avoid
    */
-  const run = async (/** @type {number} */ rows, /** @type {boolean} */ avoid) => {
+  const run = async (rows, avoid) => {
     const bytes = await page.evaluate(
-      async ({ rows, avoid }) => {
+      async ({ rows, avoid, CSS }) => {
         const lib = await import('/src/index.js');
         await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
         let html = '<div id="doc">';
@@ -284,14 +306,11 @@ test('break-after: avoid — 見出しがページ末尾に取り残されない
         html += '<h2>見出し</h2>';
         for (let i = 0; i < 10; i++) html += `<p>続く段落 ${i + 1}</p>`;
         html += '</div>';
-        const css =
-          '#doc{font-family:"BIZ UDPGothic";font-size:12pt;width:180mm}' +
-          'p{margin:0;line-height:16pt}' +
-          `h2{margin:0;font-size:12pt;line-height:16pt${avoid ? ';break-after:avoid' : ''}}`;
+        const css = avoid ? `${CSS}h2{break-after:avoid}` : CSS;
         const out = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
         return Array.from(out);
       },
-      { rows, avoid },
+      { rows, avoid, CSS },
     );
     // pdf.js はグリフ間の隙間を空白として拾うことがあるので空白を落として比較する
     const pages = (await extractText(bytes)).pages.map((t) => t.replace(/\s/g, ''));
@@ -301,8 +320,9 @@ test('break-after: avoid — 見出しがページ末尾に取り残されない
     };
   };
 
+  // 測った境界の前後を掃く（分割位置の丸めで数行ずれても拾えるように）
   let separatedWithout = 0;
-  for (let rows = 43; rows <= 50; rows++) {
+  for (let rows = boundaryRows - 3; rows <= boundaryRows + 3; rows++) {
     const off = await run(rows, false);
     const on = await run(rows, true);
     expect(off.heading, `${rows} 行: 見出しが見つかる`).toBeGreaterThanOrEqual(0);
@@ -310,11 +330,12 @@ test('break-after: avoid — 見出しがページ末尾に取り残されない
 
     // avoid を付けたら、見出しと次の段落は必ず同じページに載る
     expect(on.heading, `${rows} 行: avoid ありなら見出しと次の段落が同じページ`).toBe(on.next);
+    testInfo.annotations.push({ type: 'rows', description: `${rows} 行: avoid なし 見出し=p${off.heading + 1}/次=p${off.next + 1}、avoid あり 見出し=p${on.heading + 1}/次=p${on.next + 1}` });
     if (off.heading !== off.next) separatedWithout++;
   }
 
-  // avoid 無しでは、どこかの行数で必ず離れてしまう（= avoid が実際に効いている状況を通っている）
-  expect(separatedWithout, 'avoid 無しで見出しが取り残される行数が少なくとも 1 つある').toBeGreaterThan(0);
+  // avoid 無しでは境界付近で必ず離れてしまう（= avoid が効く状況を実際に通っている）
+  expect(separatedWithout, `avoid 無しで見出しが取り残される行数がある（境界 ${boundaryRows} 行の前後を確認）`).toBeGreaterThan(0);
 });
 
 test('linear-gradient をベクターで描き、ブラウザ描画と一致する', async ({ page }, testInfo) => {
