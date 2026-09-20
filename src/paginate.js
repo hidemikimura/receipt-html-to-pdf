@@ -4,6 +4,7 @@
  *
  * 方針: 命令は動かさず、ページごとに「この y 範囲を描く」と決めるだけにする。
  * 境界は、アトム（テキスト行・表の行・画像・break-inside: avoid）を跨がない位置まで上へ戻す。
+ * `break-before/after: avoid` で結ばれた箱の間にも境界を置かず、置きそうなら前の箱の先頭まで戻す。
  * テーブルが次ページへ続くときは thead を各ページ先頭で繰り返し、その高さ分だけ本文を下げる。
  */
 
@@ -27,10 +28,17 @@
  * @returns {PageRange[]}
  */
 export function paginate(walk, pageHeightPx) {
+  const EPS_INIT = 0.01;
   const H = pageHeightPx;
   const total = walk.height;
   const atoms = [...walk.atoms].sort((a, b) => a.top - b.top);
   const breaks = [...new Set(walk.breaks)].sort((a, b) => a - b);
+  // break-before/after: avoid で結ばれた箱。
+  // 境界は次の箱の「先頭」ではなく「最初の行」まで許せない（line-height の半行分だけ箱の上端より下に来るため）。
+  const joins = (walk.joins ?? []).map((j) => {
+    const first = atoms.find((a) => a.top >= j.end - EPS_INIT);
+    return { start: j.start, limit: first ? Math.max(first.top, j.end) : j.end, pullTo: j.pullTo };
+  });
   const EPS = 0.01;
 
   /** @type {PageRange[]} */
@@ -107,6 +115,17 @@ export function paginate(walk, pageHeightPx) {
           if (a.bottom - a.top > capacity) continue;
           if (a.top < end - EPS && a.bottom > end + EPS && a.top > start + EPS) {
             end = a.top;
+            moved = true;
+          }
+        }
+        // break-before/after: avoid — 結ばれた 2 つの箱の間に境界があれば、前の箱の先頭まで戻す
+        for (const j of joins) {
+          // 結んだ範囲がページに収まらないなら諦める（戻しても同じ位置で切ることになる）
+          if (j.limit - j.pullTo > capacity) continue;
+          // 戻し先がページ先頭以前だと空ページになるので諦める
+          if (j.pullTo <= start + EPS) continue;
+          if (end >= j.start - EPS && end <= j.limit + EPS && end > j.pullTo + EPS) {
+            end = j.pullTo;
             moved = true;
           }
         }

@@ -74,6 +74,14 @@ export { expandPrintMediaCss } from "./renderer.js";
  * @property {string} [text]       missing-glyph のときの該当文字
  */
 /**
+ * 変換の進み具合。長い文書で進捗表示を出すために使う。
+ *
+ * @typedef {object} ConversionProgress
+ * @property {'render'|'walk'|'layout'|'page'|'done'} phase
+ * @property {number} [page]        phase が 'page' のときの 1 始まりのページ番号
+ * @property {number} [totalPages]  phase が 'layout' 以降で確定する総ページ数
+ */
+/**
  * @typedef {object} ConvertOptions
  * @property {PageOptions} [page]
  * @property {string[]} [fontFallback]           未登録ファミリーが要求されたときに試す family の順序
@@ -87,13 +95,14 @@ export { expandPrintMediaCss } from "./renderer.js";
  * @property {'blob'|'uint8array'|'dataurl'} [output='blob']
  * @property {string} [baseUrl]                  相対 URL（フォント・画像）の基準。既定は現在の文書
  * @property {(warning: ConversionWarning) => void} [onWarning]
+ * @property {(progress: ConversionProgress) => void} [onProgress]  進捗通知。長い文書では途中でイベントループへ戻すので、UI を更新できる
  */
 /**
  * 変換の入力。DOM 要素、または HTML 文字列。
  * @typedef {Element|string} ConvertInput
  */
 /** ライブラリのバージョン（package.json と同期） */
-export const version: "0.2.1";
+export const version: "0.3.0";
 /**
  * 登録するフォントの定義。
  * `src` は TrueType アウトライン（glyf）を持つ静的 TTF のみ対応。
@@ -154,6 +163,20 @@ export type ConversionWarning = {
      */
     text?: string | undefined;
 };
+/**
+ * 変換の進み具合。長い文書で進捗表示を出すために使う。
+ */
+export type ConversionProgress = {
+    phase: "render" | "walk" | "layout" | "page" | "done";
+    /**
+     * phase が 'page' のときの 1 始まりのページ番号
+     */
+    page?: number | undefined;
+    /**
+     * phase が 'layout' 以降で確定する総ページ数
+     */
+    totalPages?: number | undefined;
+};
 export type ConvertOptions = {
     page?: PageOptions | undefined;
     /**
@@ -191,6 +214,10 @@ export type ConvertOptions = {
      */
     baseUrl?: string | undefined;
     onWarning?: ((warning: ConversionWarning) => void) | undefined;
+    /**
+     * 進捗通知。長い文書では途中でイベントループへ戻すので、UI を更新できる
+     */
+    onProgress?: ((progress: ConversionProgress) => void) | undefined;
 };
 /**
  * 変換の入力。DOM 要素、または HTML 文字列。

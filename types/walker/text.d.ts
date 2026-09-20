@@ -33,6 +33,10 @@ export type MeasureOptions = {
      */
     size: number;
     textMeasure: "font" | "measure" | "auto";
+    /**
+     * ブラウザが有効にしている OpenType 機能タグ（GSUB の単一置換を再現する）
+     */
+    features: string[];
     warn: (w: import("../index.js").ConversionWarning) => void;
     element: Element;
 };

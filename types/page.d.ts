@@ -20,7 +20,7 @@ export function resolvePage(page?: import("./index.js").PageOptions | undefined)
 /**
  * @param {import('./walker/walk.js').WalkResult} body
  * @param {PageGeometry} geo
- * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null}} opts
+ * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null, pacer?: import('./pacer.js').Pacer, progress?: (p: import('./index.js').ConversionProgress) => void, warn?: (w: import('./index.js').ConversionWarning) => void}} opts
  * @returns {Promise<Uint8Array>}
  */
 export function buildPdf(body: import("./walker/walk.js").WalkResult, geo: PageGeometry, opts: {
@@ -28,6 +28,9 @@ export function buildPdf(body: import("./walker/walk.js").WalkResult, geo: PageG
     metadata?: import("./index.js").PdfMetadata;
     header?: PageDecoration | null;
     footer?: PageDecoration | null;
+    pacer?: import("./pacer.js").Pacer;
+    progress?: (p: import("./index.js").ConversionProgress) => void;
+    warn?: (w: import("./index.js").ConversionWarning) => void;
 }): Promise<Uint8Array>;
 export type PageGeometry = {
     /**

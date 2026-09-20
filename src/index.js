@@ -10,6 +10,7 @@ import { renderDocument } from './renderer.js';
 import { walk } from './walker/walk.js';
 import { resolvePage, buildPdf } from './page.js';
 import { PX_TO_PT } from './units.js';
+import { createPacer } from './pacer.js';
 
 export { expandPrintMediaCss } from './renderer.js';
 
@@ -59,6 +60,15 @@ export { expandPrintMediaCss } from './renderer.js';
  */
 
 /**
+ * 変換の進み具合。長い文書で進捗表示を出すために使う。
+ *
+ * @typedef {object} ConversionProgress
+ * @property {'render'|'walk'|'layout'|'page'|'done'} phase
+ * @property {number} [page]        phase が 'page' のときの 1 始まりのページ番号
+ * @property {number} [totalPages]  phase が 'layout' 以降で確定する総ページ数
+ */
+
+/**
  * @typedef {object} ConvertOptions
  * @property {PageOptions} [page]
  * @property {string[]} [fontFallback]           未登録ファミリーが要求されたときに試す family の順序
@@ -72,6 +82,7 @@ export { expandPrintMediaCss } from './renderer.js';
  * @property {'blob'|'uint8array'|'dataurl'} [output='blob']
  * @property {string} [baseUrl]                  相対 URL（フォント・画像）の基準。既定は現在の文書
  * @property {(warning: ConversionWarning) => void} [onWarning]
+ * @property {(progress: ConversionProgress) => void} [onProgress]  進捗通知。長い文書では途中でイベントループへ戻すので、UI を更新できる
  */
 
 /**
@@ -80,7 +91,7 @@ export { expandPrintMediaCss } from './renderer.js';
  */
 
 /** ライブラリのバージョン（package.json と同期） */
-export const version = '0.2.1';
+export const version = '0.3.0';
 
 /** モジュール共有のフォントレジストリ */
 const registry = new FontRegistry();
@@ -124,9 +135,13 @@ export async function htmlToPdf(input, options = {}) {
     throw new Error('htmlToPdf: no fonts registered. Call registerFont() with at least one TrueType font first.');
   }
   const warn = options.onWarning ?? (() => {});
+  const progress = options.onProgress ?? (() => {});
+  // 長い変換でメインスレッドを占有しないよう、一定時間ごとにイベントループへ戻す
+  const pacer = createPacer();
   const geo = resolvePage(options.page);
   const widthPx = (geo.width - geo.left - geo.right) / PX_TO_PT;
 
+  progress({ phase: 'render' });
   const rendered = await renderDocument(input, {
     widthPx,
     stylesheets: options.stylesheets ?? 'inherit',
@@ -141,6 +156,7 @@ export async function htmlToPdf(input, options = {}) {
     fontFallback: options.fontFallback ?? [],
     warn,
     textMeasure: options.textMeasure ?? 'auto',
+    pacer,
   };
   const renderOpts = {
     widthPx,
@@ -151,6 +167,7 @@ export async function htmlToPdf(input, options = {}) {
   };
 
   try {
+    progress({ phase: 'walk' });
     const body = await walk(rendered.root, walkCtx);
     const header = options.header ? await makeDecoration(options.header, renderOpts, walkCtx) : null;
     const footer = options.footer ? await makeDecoration(options.footer, renderOpts, walkCtx) : null;
@@ -159,7 +176,11 @@ export async function htmlToPdf(input, options = {}) {
       metadata: options.metadata,
       header,
       footer,
+      pacer,
+      progress,
+      warn,
     });
+    progress({ phase: 'done' });
     return toOutput(bytes, options.output ?? 'blob');
   } finally {
     rendered.destroy();

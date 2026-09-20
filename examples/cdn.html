@@ -61,11 +61,11 @@
 
 <!--
   ここが CDN からの読み込み。type="module" が要る。
-  バージョン（@0.2.1）は必ず固定する。外すと最新版が読み込まれ、更新のたびに挙動が変わりうる。
+  バージョン（@0.3.0）は必ず固定する。外すと最新版が読み込まれ、更新のたびに挙動が変わりうる。
 -->
 <script type="module">
   import * as ReceiptHtmlToPdf
-    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
 
   // type="module" でない普通のスクリプトからも使えるようにグローバルへ載せる
   window.ReceiptHtmlToPdf = ReceiptHtmlToPdf;

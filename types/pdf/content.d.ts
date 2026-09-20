@@ -41,8 +41,25 @@ export class ContentStream {
      * @param {string} name @param {number} x @param {number} y @param {number} w @param {number} h
      */
     image(name: string, x: number, y: number, w: number, h: number): this;
-    fill(): this;
+    /** @param {0|1|2} join */
+    lineJoin(join: 0 | 1 | 2): this;
+    /** @param {number} limit */
+    miterLimit(limit: number): this;
+    /** @param {boolean} [evenOdd] */
+    fill(evenOdd?: boolean): this;
+    /** 塗りと線の両方（B / B*） @param {boolean} [evenOdd] */
+    fillAndStroke(evenOdd?: boolean): this;
+    /**
+     * 正規化済みのパス（M / L / C / Z）を出力する。
+     * @param {import('../walker/svg-path.js').PathSeg[]} segs
+     */
+    path(segs: import("../walker/svg-path.js").PathSeg[]): this;
     stroke(): this;
+    /**
+     * シェーディングを現在のクリップ範囲いっぱいに塗る。
+     * @param {string} name  Shading リソース名
+     */
+    shading(name: string): this;
     /** 現在のパスでクリップして新しいパスを開始する */
     clip(): this;
     /** @param {number} x @param {number} y @param {number} w @param {number} h */

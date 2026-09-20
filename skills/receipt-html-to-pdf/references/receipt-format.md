@@ -51,6 +51,8 @@ taxable8  =  4,200  →  tax8  = floor(4200 * 0.08)  =   336
 ## このライブラリで組むときの注意
 
 - 金額欄の右寄せ（`text-align: right`）はブラウザの計算どおりに出るので追加実装は不要
-- `font-variant-numeric: tabular-nums` は GSUB 依存で**効かない**。数字が元から等幅のフォント（BIZ UDPGothic は等幅）を使う
+- **金額の桁揃え**: `font-variant-numeric: tabular-nums` は日本語フォントでは効かないことが多い。BIZ UDPGothic・Noto Sans JP・M PLUS 1p・IBM Plex Sans JP・Zen Kaku Gothic New のいずれにも `tnum` 機能が無く、ブラウザ側でも何も起きない。しかも **BIZ UDPGothic はプロポーショナル体で、数字の `1` だけ幅が狭い**（送り幅 1290、他は 1556 / unitsPerEm 2048）ため、そのままでは縦に揃わない
+  - 対策 1: 数字の送り幅がもともと揃っているフォントを使う（BIZ UD**G**othic は全数字 1024、Noto Sans JP も一定）
+  - 対策 2: 金額は表のセルに入れて右揃え + 列幅固定にする（この方法は今のままで正しく出る）
 - 明細が長くなる帳票では、集計ブロックと発行者ブロックに `break-inside: avoid` を付けるとページ境界で割れない
 - `<thead>` に見出し行、`<tfoot>` に合計行を置くと、複数ページ時に各ページへ自動で繰り返される

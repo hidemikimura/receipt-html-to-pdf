@@ -6,7 +6,10 @@
 import { parseColor, cssPx } from '../units.js';
 import { splitFamilies, parseWeight } from '../font/registry.js';
 import { measureText } from './text.js';
-import { loadImage, parseBackgroundUrl, fitImage, objectFitToSize } from './image.js';
+import { featureTagsOf } from '../font/gsub.js';
+import { loadImage, parseBackgroundUrl, fitImage, objectFitToSize, splitRepeat, tileAxis } from './image.js';
+import { parseLinearGradient } from './gradient.js';
+import { shapeToPath } from './svg-path.js';
 
 /**
  * @typedef {import('../units.js').Rgba} Rgba
@@ -21,11 +24,15 @@ import { loadImage, parseBackgroundUrl, fitImage, objectFitToSize } from './imag
  * @typedef {{type: 'text', x: number, y: number, top: number, bottom: number, size: number, color: Rgba, font: import('../font/registry.js').RegisteredFont, glyphs: Glyph[], z: number, seq: number}} TextItem
  * @typedef {{type: 'group', matrix: [number, number, number, number, number, number], origin: {x: number, y: number}, items: DisplayItem[], top: number, bottom: number, z: number, seq: number}} GroupItem
  * @typedef {{type: 'clip', box: Box, items: DisplayItem[], top: number, bottom: number, z: number, seq: number}} ClipItem  overflow: hidden
- * @typedef {RectItem|LineItem|StrokeRRectItem|ImageItem|TextItem|GroupItem|ClipItem} DisplayItem
+ * @typedef {{type: 'gradient', box: Box, clip: Box, gradient: import('./gradient.js').LinearGradient, alpha: number, z: number, seq: number}} GradientItem  linear-gradient（box はグラデーションの基準領域、clip は描画範囲）
+ * @typedef {{color: Rgba, width: number, cap: 0|1|2, join: 0|1|2, miter: number, dash: number[]|null, dashOffset: number}} PathStroke
+ * @typedef {{type: 'path', segs: import('./svg-path.js').PathSeg[], matrix: [number, number, number, number, number, number], fill: Rgba|null, evenOdd: boolean, stroke: PathStroke|null, top: number, bottom: number, z: number, seq: number}} PathItem  インライン SVG の図形（matrix はユーザー単位 → ドキュメント px）
+ * @typedef {RectItem|LineItem|StrokeRRectItem|ImageItem|TextItem|GroupItem|ClipItem|GradientItem|PathItem} DisplayItem
  *
  * @typedef {{top: number, bottom: number}} Atom  ページ境界を跨いではいけない縦範囲（行・表の行・画像・break-inside: avoid）
  * @typedef {{top: number, bottom: number, headTop: number, headBottom: number, headItems: DisplayItem[], footTop: number, footBottom: number, footItems: DisplayItem[]}} TableInfo
- * @typedef {{items: DisplayItem[], atoms: Atom[], breaks: number[], tables: TableInfo[], height: number}} WalkResult
+ * @typedef {{start: number, end: number, pullTo: number}} Join  break-before/after: avoid — [start, end] に境界を置かず、置きそうなら pullTo まで戻す
+ * @typedef {{items: DisplayItem[], atoms: Atom[], breaks: number[], joins: Join[], tables: TableInfo[], height: number}} WalkResult
  */
 
 /**
@@ -34,9 +41,19 @@ import { loadImage, parseBackgroundUrl, fitImage, objectFitToSize } from './imag
  * @property {string[]} fontFallback
  * @property {(w: import('../index.js').ConversionWarning) => void} warn
  * @property {'font'|'measure'|'auto'} textMeasure
+ * @property {import('../pacer.js').Pacer} [pacer]  長い走査で途中イベントループへ戻すための譲渡
  */
 
-const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'META', 'LINK', 'TITLE', 'BASE', 'IFRAME', 'CANVAS', 'VIDEO', 'AUDIO', 'SVG', 'OBJECT', 'EMBED']);
+const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'META', 'LINK', 'TITLE', 'BASE', 'IFRAME', 'CANVAS', 'VIDEO', 'AUDIO', 'OBJECT', 'EMBED']);
+
+/** background-repeat で並べるタイルの上限。これを超えたら 1 枚だけ描いて警告する。 */
+const MAX_BG_TILES = 4000;
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** 描画されない SVG 要素（定義や説明）。黙って飛ばす。 */
+const SVG_NON_RENDERED = new Set(['defs', 'symbol', 'marker', 'clipPath', 'mask', 'pattern', 'filter', 'linearGradient', 'radialGradient', 'style', 'title', 'desc', 'metadata', 'script']);
+/** 子をたどるだけの SVG 要素 */
+const SVG_CONTAINERS = new Set(['g', 'a', 'svg', 'switch']);
 
 /**
  * flat tree（シャドウ DOM を展開した木）での子ノードを返す。
@@ -88,6 +105,8 @@ export async function walk(root, ctx) {
   const atoms = [];
   /** @type {number[]} */
   const breaks = [];
+  /** @type {Join[]} */
+  const joins = [];
   /** @type {TableInfo[]} */
   const tables = [];
   /** @type {TableInfo|null} 走査中のテーブル（thead の描画命令を記録する先） */
@@ -118,6 +137,7 @@ export async function walk(root, ctx) {
    */
   async function visit(el, inherited) {
     if (SKIP_TAGS.has(el.tagName)) return;
+    if (ctx.pacer) await ctx.pacer();
     const style = win.getComputedStyle(el);
     if (style.display === 'none') return;
 
@@ -189,8 +209,17 @@ export async function walk(root, ctx) {
         if (/^(page|always|left|right|recto|verso)$/.test(ba)) breaks.push(bottom);
         const bi = style.breakInside || style.pageBreakInside;
         // 表の行・行グループ・画像・avoid 指定は分割しない
-        if (bi === 'avoid' || bi === 'avoid-page' || style.display === 'table-row' || style.display === 'table-header-group' || style.display === 'table-footer-group' || el.tagName === 'IMG') {
+        if (bi === 'avoid' || bi === 'avoid-page' || style.display === 'table-row' || style.display === 'table-header-group' || style.display === 'table-footer-group' || el.tagName === 'IMG' || el.tagName === 'svg') {
           atoms.push({ top, bottom });
+        }
+        // break-before/after: avoid — 隣の箱との間にページ境界を置かせない
+        if (/^avoid(-page)?$/.test(ba)) {
+          const next = nextBoxAfter(el);
+          if (next) joins.push({ start: Math.min(bottom, next.top), end: Math.max(bottom, next.top), pullTo: top });
+        }
+        if (/^avoid(-page)?$/.test(bb)) {
+          const prev = prevBoxBefore(el);
+          if (prev) joins.push({ start: Math.min(prev.bottom, top), end: Math.max(prev.bottom, top), pullTo: prev.top });
         }
       }
     }
@@ -247,6 +276,12 @@ export async function walk(root, ctx) {
       out = [];
     }
     const next = { z, alpha, decorations };
+    // インライン SVG: 子は SVG の規則で走査してパスに変換する
+    if (el.tagName === 'svg' && el.namespaceURI === SVG_NS) {
+      paintSvgChildren(el, alpha, z);
+      if (clipBox && clipSaved) finishClip(clipBox, clipSaved, z);
+      return;
+    }
     for (const node of flatChildNodes(el)) {
       if (node.nodeType === Node.TEXT_NODE) {
         if (visible) paintText(/** @type {Text} */ (node), el, style, next);
@@ -254,14 +289,7 @@ export async function walk(root, ctx) {
         await visit(/** @type {Element} */ (node), next);
       }
     }
-    if (clipBox && clipSaved) {
-      // 完全に外にある命令は捨てる（クリップで消えた文字が抽出テキストに残らないように）
-      const inside = out.filter((it) => intersects(it, /** @type {Box} */ (clipBox)));
-      out = clipSaved;
-      if (inside.length) {
-        out.push({ type: 'clip', box: clipBox, items: inside, top: clipBox.y, bottom: clipBox.y + clipBox.h, z, seq: seq++ });
-      }
-    }
+    if (clipBox && clipSaved) finishClip(clipBox, clipSaved, z);
 
     if ((isHead || isFoot) && currentTable && groupStart >= 0) {
       const r = el.getBoundingClientRect();
@@ -323,11 +351,23 @@ export async function walk(root, ctx) {
    */
   async function paintBackgroundImage(el, r, style, alpha, z, radius) {
     if (style.backgroundImage === 'none') return;
+
+    // background-origin / clip（既定: padding-box / border-box）
+    const bgClip = boxFor(r, style, style.backgroundClip || 'border-box', radius);
+    const bgOrigin = boxFor(r, style, style.backgroundOrigin || 'padding-box', null);
+
+    // linear-gradient は PDF の軸シェーディングで描く
+    const gradient = parseLinearGradient(style.backgroundImage, bgOrigin.w, bgOrigin.h);
+    if (gradient) {
+      out.push({ type: 'gradient', box: bgOrigin, clip: bgClip, gradient, alpha, z, seq: seq++ });
+      return;
+    }
+
     const url = parseBackgroundUrl(style.backgroundImage);
     if (!url) {
       warnOnce('css:backgroundImage', {
         code: 'unsupported-css',
-        message: `background-image "${style.backgroundImage}" is not supported (only a single url() is); ignored`,
+        message: `background-image "${style.backgroundImage}" is not supported (a single url() or linear-gradient() is); ignored`,
         element: el,
         property: 'background-image',
       });
@@ -335,19 +375,28 @@ export async function walk(root, ctx) {
     }
     const img = await loadImage(new URL(url, el.ownerDocument.baseURI).href, ctx.warn, el);
     if (!img) return;
-    if (style.backgroundRepeat !== 'no-repeat') {
+    const fit = fitImage(bgOrigin, img.width, img.height, style.backgroundSize, style.backgroundPosition);
+
+    // background-repeat: 軸ごとにタイル位置を求め、描画領域（bgClip）を覆うまで並べる
+    const [rx, ry] = splitRepeat(style.backgroundRepeat);
+    const ax = tileAxis(rx, fit.x, fit.w, bgClip.x, bgClip.x + bgClip.w);
+    const ay = tileAxis(ry, fit.y, fit.h, bgClip.y, bgClip.y + bgClip.h);
+    const count = ax.positions.length * ay.positions.length;
+    if (count > MAX_BG_TILES) {
       warnOnce('css:backgroundRepeat', {
         code: 'unsupported-css',
-        message: `background-repeat "${style.backgroundRepeat}" is not supported; drawn once as no-repeat`,
+        message: `background-repeat would need ${count} tiles (limit ${MAX_BG_TILES}); drawn once instead. Use a larger background-size or a pre-tiled image.`,
         element: el,
         property: 'background-repeat',
       });
+      out.push({ type: 'image', ...fit, image: img, clip: bgClip, alpha, z, seq: seq++ });
+      return;
     }
-    // background-origin / clip（既定: padding-box / border-box）
-    const clipBox = boxFor(r, style, style.backgroundClip || 'border-box', radius);
-    const originBox = boxFor(r, style, style.backgroundOrigin || 'padding-box', null);
-    const fit = fitImage(originBox, img.width, img.height, style.backgroundSize, style.backgroundPosition);
-    out.push({ type: 'image', ...fit, image: img, clip: clipBox, alpha, z, seq: seq++ });
+    for (const y of ay.positions) {
+      for (const x of ax.positions) {
+        out.push({ type: 'image', x, y, w: ax.size, h: ay.size, image: img, clip: bgClip, alpha, z, seq: seq++ });
+      }
+    }
   }
 
   /**
@@ -540,6 +589,7 @@ export async function walk(root, ctx) {
       fstyle,
       size,
       textMeasure: ctx.textMeasure,
+      features: featureTagsOf(style),
       warn: ctx.warn,
       element: parent,
     });
@@ -588,7 +638,203 @@ export async function walk(root, ctx) {
     else if (it.type === 'line') height = Math.max(height, it.y1, it.y2);
     else if (it.type === 'text' || it.type === 'group' || it.type === 'clip') height = Math.max(height, it.bottom);
   }
-  return { items: rootItems, atoms, breaks, tables, height };
+  /**
+   * インライン SVG の子要素を走査し、図形をパス命令に変換する。
+   * viewBox やプレゼンテーション属性の解決はブラウザに任せ、
+   * 変換行列は getScreenCTM()、塗りと線は getComputedStyle() から取る。
+   *
+   * @param {Element} container
+   * @param {number} alpha
+   * @param {number} z
+   */
+  function paintSvgChildren(container, alpha, z) {
+    for (const child of container.children) {
+      if (child.namespaceURI !== SVG_NS) continue;
+      const tag = child.tagName;
+      if (SVG_NON_RENDERED.has(tag)) continue;
+      const style = win.getComputedStyle(child);
+      if (style.display === 'none') continue;
+      const op = parseFloat(style.opacity);
+      const a = alpha * (Number.isFinite(op) ? op : 1);
+      if (a <= 0) continue;
+
+      if (SVG_CONTAINERS.has(tag)) {
+        paintSvgChildren(child, a, z);
+        continue;
+      }
+
+      // 幾何プロパティは computed style を優先する（% 指定などをブラウザに解決させる）
+      const attr = (/** @type {string} */ name) => {
+        const v = style.getPropertyValue(name);
+        if (v && /^-?[\d.]+px$/.test(v)) return String(parseFloat(v));
+        return child.getAttribute(name) ?? '';
+      };
+      const segs = shapeToPath(child, attr);
+      if (segs === null) {
+        warnOnce(`svg:${tag}`, {
+          code: 'unsupported-css',
+          message: `<${tag}> inside an inline <svg> is not supported and was skipped (shapes are: path, rect, circle, ellipse, line, polyline, polygon)`,
+          element: child,
+        });
+        continue;
+      }
+      if (!segs.length || style.visibility !== 'visible') continue;
+
+      const ctm = /** @type {SVGGraphicsElement} */ (/** @type {unknown} */ (child)).getScreenCTM?.();
+      if (!ctm) continue;
+      const fill = svgPaint(child, style.fill, style.fillOpacity, a, 'fill');
+      const stroke = svgStroke(child, style, a);
+      if (!fill && !stroke) continue;
+
+      const r = child.getBoundingClientRect();
+      out.push({
+        type: 'path',
+        segs,
+        matrix: [ctm.a, ctm.b, ctm.c, ctm.d, ctm.e + sx, ctm.f + sy],
+        fill,
+        evenOdd: style.fillRule === 'evenodd',
+        stroke,
+        top: r.top + sy,
+        bottom: r.bottom + sy,
+        z,
+        seq: seq++,
+      });
+    }
+  }
+
+  /**
+   * SVG の paint 値（`none` / `rgb(...)` / `url(#id)`）を色にする。塗らないなら null。
+   * @param {Element} el
+   * @param {string} value
+   * @param {string} opacity
+   * @param {number} alpha
+   * @param {'fill'|'stroke'} kind
+   * @returns {Rgba|null}
+   */
+  function svgPaint(el, value, opacity, alpha, kind) {
+    if (!value || value === 'none') return null;
+    if (value.startsWith('url(')) {
+      warnOnce(`svg:${kind}:url`, {
+        code: 'unsupported-css',
+        message: `${kind} with a paint server (${value}) inside an inline <svg> is not supported; the shape is skipped`,
+        element: el,
+        property: kind,
+      });
+      return null;
+    }
+    const c = parseColor(value);
+    if (!c) return null;
+    const o = parseFloat(opacity);
+    const f = alpha * (Number.isFinite(o) ? o : 1);
+    return f === 1 ? c : { ...c, a: c.a * f };
+  }
+
+  /**
+   * @param {Element} el
+   * @param {CSSStyleDeclaration} style
+   * @param {number} alpha
+   * @returns {PathStroke|null}
+   */
+  function svgStroke(el, style, alpha) {
+    const color = svgPaint(el, style.stroke, style.strokeOpacity, alpha, 'stroke');
+    if (!color) return null;
+    const width = cssPx(style.strokeWidth);
+    if (!(width > 0)) return null;
+    const dashes = (style.strokeDasharray || 'none')
+      .split(/[\s,]+/)
+      .map((v) => cssPx(v))
+      .filter((v) => Number.isFinite(v) && v >= 0);
+    const cap = style.strokeLinecap === 'round' ? 1 : style.strokeLinecap === 'square' ? 2 : 0;
+    const join = style.strokeLinejoin === 'round' ? 1 : style.strokeLinejoin === 'bevel' ? 2 : 0;
+    const miter = parseFloat(style.strokeMiterlimit);
+    return {
+      color,
+      width,
+      cap: /** @type {0|1|2} */ (cap),
+      join: /** @type {0|1|2} */ (join),
+      miter: Number.isFinite(miter) && miter >= 1 ? miter : 4,
+      dash: dashes.length && dashes.some((v) => v > 0) ? dashes : null,
+      dashOffset: cssPx(style.strokeDashoffset) || 0,
+    };
+  }
+
+  /**
+   * overflow クリップを閉じる。範囲外の命令は捨てる（クリップで消えた文字が抽出テキストに残らないように）。
+   * @param {Box} clipBox
+   * @param {DisplayItem[]} saved
+   * @param {number} z
+   */
+  function finishClip(clipBox, saved, z) {
+    const inside = out.filter((it) => intersects(it, clipBox));
+    out = saved;
+    if (inside.length) {
+      out.push({ type: 'clip', box: clipBox, items: inside, top: clipBox.y, bottom: clipBox.y + clipBox.h, z, seq: seq++ });
+    }
+  }
+
+  /**
+   * el の子孫を飛ばして、文書順で次に現れる箱を返す。
+   * 兄弟が無ければ親をさかのぼるので、`<section>` の最後の見出しに break-after: avoid を書いても
+   * 次の `<section>` と結びつく。
+   * @param {Element} el
+   * @returns {{top: number, bottom: number}|null}
+   */
+  function nextBoxAfter(el) {
+    /** @type {Element|null} */
+    let node = el;
+    while (node && node !== root) {
+      for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+        const box = edgeBoxIn(sib, 'first');
+        if (box) return box;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * el の子孫と祖先を飛ばして、文書順で直前に現れる箱を返す。
+   * @param {Element} el
+   * @returns {{top: number, bottom: number}|null}
+   */
+  function prevBoxBefore(el) {
+    /** @type {Element|null} */
+    let node = el;
+    while (node && node !== root) {
+      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+        const box = edgeBoxIn(sib, 'last');
+        if (box) return box;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * el 自身が箱ならそれを、そうでなければ（display: contents / inline、高さ 0）
+   * 子孫の最初／最後の箱を返す。
+   * @param {Element} el
+   * @param {'first'|'last'} side
+   * @returns {{top: number, bottom: number}|null}
+   */
+  function edgeBoxIn(el, side) {
+    if (SKIP_TAGS.has(el.tagName)) return null;
+    const style = win.getComputedStyle(el);
+    if (style.display === 'none') return null;
+    if (style.display !== 'contents' && style.display !== 'inline') {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0) return { top: r.top + sy, bottom: r.bottom + sy };
+    }
+    const children = [...el.children];
+    if (side === 'last') children.reverse();
+    for (const child of children) {
+      const box = edgeBoxIn(child, side);
+      if (box) return box;
+    }
+    return null;
+  }
+
+  return { items: rootItems, atoms, breaks, joins, tables, height };
 }
 
 /** @param {DisplayItem[]} items */
@@ -673,8 +919,11 @@ function intersects(it, b) {
   } else if (it.type === 'text') {
     const last = it.glyphs[it.glyphs.length - 1];
     x1 = it.x; y1 = it.top; x2 = last ? last.x + last.advance : it.x; y2 = it.bottom;
-  } else if (it.type === 'clip') {
-    x1 = it.box.x; y1 = it.box.y; x2 = it.box.x + it.box.w; y2 = it.box.y + it.box.h;
+  } else if (it.type === 'path') {
+    return true; // 変換行列で回転しうるので常に残す
+  } else if (it.type === 'clip' || it.type === 'gradient') {
+    const b2 = it.type === 'clip' ? it.box : it.clip;
+    x1 = b2.x; y1 = b2.y; x2 = b2.x + b2.w; y2 = b2.y + b2.h;
   } else {
     return true; // group（transform）は境界が回転するので常に残す
   }

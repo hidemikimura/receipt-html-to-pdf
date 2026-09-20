@@ -2,6 +2,39 @@
 
 設計と経緯の詳細は docs/design.md。
 
+## 0.3.0 — 描画と大きな文書の強化（2026-09-20）
+
+### 追加
+
+- **`onProgress` を追加**。`render` → `walk` → `layout`（総ページ数が確定）→ `page`（1 ページずつ）→ `done` の順に進み具合を通知する（docs/design.md 25 章）
+- **長い変換でメインスレッドを占有しなくなった**。12ms ごとにイベントループへ戻す（`scheduler.yield()` があればそれを使う）。3000 行・130 ページの文書で、走査中に描画されるフレーム数が 0 → 5、変換全体の最長フレーム間隔が 934ms → 181ms。所要時間の増加は約 9%
+- **埋め込み後にデコード済み画像データを解放する**。以前はデコード結果（RGB・アルファ）が URL キーのキャッシュに永久に残っていた。600×600 の透過 PNG 12 枚で、変換後に残るメモリが約 17MB → 1.3MB。次の変換では読み直しになる（速度よりメモリを優先）
+- **`background-repeat` に対応**。`repeat` / `no-repeat` / `repeat-x` / `repeat-y` / `space` / `round` と、軸ごとの 2 値指定（`repeat space` など）
+  - タイルは同じ画像 XObject を参照するので、繰り返しても画像の埋め込みは 1 回だけ
+  - `round` はタイルの大きさを調整して整数個収め、`space` は余りを隙間に等分する（CSS 仕様どおり）
+  - タイルが 4000 枚を超える場合のみ、1 枚だけ描いて警告する
+- **GSUB の単一置換に対応**。ブラウザが `font-variant-numeric` / `-caps` / `-east-asian` / `font-feature-settings` で有効にした機能と同じグリフ置換を PDF でも行う（docs/design.md 23 章）
+  - `zero`（スラッシュ付きゼロ）、`jp78` / `jp83` / `jp90` / `jp04` / `nlck` / `trad` / `smpl`（旧字体・異体字）、`fwid` / `hwid`、`smcp` など
+  - 置換は埋め込み前に解決するので、GSUB テーブル自体は PDF に入らない。抽出テキストは元の文字のまま（ToUnicode は変えない）
+  - 合字（`liga` / `dlig`、Lookup タイプ 4）は未対応。既定で有効な機能（`ccmp` / `liga` / `calt`）は適用しない
+  - 調査の結果 `tabular-nums` は日本語フォントに `tnum` 機能が無く効かないことが分かったため、数字の桁揃えはフォント選択で解決する旨をドキュメントに明記した
+- **インライン `<svg>` のベクター変換に対応**。ラスタライズせず PDF のパスとして出すので、拡大しても滑らかで、テキスト以外の図形はそのまま印刷品質になる（docs/design.md 22 章）
+  - `<path>` の全コマンド（`M L H V C S Q T A Z`、相対・絶対）。円弧と二次ベジェは 3 次ベジェへ変換
+  - `<rect>`（`rx` / `ry`）・`<circle>`・`<ellipse>`・`<line>`・`<polyline>`・`<polygon>`・`<g>`・入れ子の `<svg>`
+  - `fill` / `fill-rule` / `fill-opacity`、`stroke` と `-width` / `-opacity` / `-linecap` / `-linejoin` / `-miterlimit` / `-dasharray` / `-dashoffset`、`opacity`、`visibility`
+  - `viewBox` / `preserveAspectRatio` / `transform` は `getScreenCTM()` の結果をそのまま使う
+  - `<svg>` はページ境界で分割しない
+  - `<text>` / `<use>` / paint server（`fill="url(#id)"`）は警告して飛ばす。`<img src="x.svg">` は従来どおりラスタライズ
+- **`linear-gradient` に対応**。PDF の軸シェーディング（ShadingType 2）としてベクター出力するので、拡大しても滑らかで、ファイルも軽い（docs/design.md 21 章）
+  - 角度（`<n>deg` / `to <side>` / `to <side> <side>`）、色止めの `%` / `px` / 位置省略（等間隔）/ 二重指定、単調化に対応
+  - 色止めごとにアルファが変わる場合（`transparent` → `black` など）は輝度ソフトマスクで正確に再現する
+  - `background-origin` / `background-clip` / `border-radius` を尊重する
+  - `repeating-linear-gradient` / `radial-gradient` / `conic-gradient` / 複数背景は従来どおり警告
+- **`break-before: avoid` / `break-after: avoid`（`page-break-*: avoid`）に対応**。隣の箱との間にページ境界を置かず、置きそうなら前の箱の先頭まで境界を戻す。見出しがページ末尾に取り残されるのを防げる
+  - 兄弟が無ければ親をさかのぼるので、`<section>` の最後の見出しに書いても次の `<section>` と結びつく
+  - 境界は次の箱の上端ではなく**最初の行**まで判定する（`line-height` の半行分だけ箱の上端より下に来るため）
+  - 結んだ範囲が 1 ページに収まらない場合と、戻すとページが空になる場合は諦めて普通に分割する
+
 ## 0.2.1 — 右端が切れる不具合の修正（2026-09-20）
 
 ### 追加

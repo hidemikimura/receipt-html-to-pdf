@@ -136,13 +136,55 @@ export class ContentStream {
     return this;
   }
 
-  fill() {
-    this.ops.push('f');
+  /** @param {0|1|2} join */
+  lineJoin(join) {
+    this.ops.push(`${join} j`);
+    return this;
+  }
+
+  /** @param {number} limit */
+  miterLimit(limit) {
+    this.ops.push(`${num(limit)} M`);
+    return this;
+  }
+
+  /** @param {boolean} [evenOdd] */
+  fill(evenOdd = false) {
+    this.ops.push(evenOdd ? 'f*' : 'f');
+    return this;
+  }
+
+  /** 塗りと線の両方（B / B*） @param {boolean} [evenOdd] */
+  fillAndStroke(evenOdd = false) {
+    this.ops.push(evenOdd ? 'B*' : 'B');
+    return this;
+  }
+
+  /**
+   * 正規化済みのパス（M / L / C / Z）を出力する。
+   * @param {import('../walker/svg-path.js').PathSeg[]} segs
+   */
+  path(segs) {
+    for (const s of segs) {
+      if (s[0] === 'M') this.moveTo(s[1], s[2]);
+      else if (s[0] === 'L') this.lineTo(s[1], s[2]);
+      else if (s[0] === 'C') this.curveTo(s[1], s[2], s[3], s[4], s[5], s[6]);
+      else this.closePath();
+    }
     return this;
   }
 
   stroke() {
     this.ops.push('S');
+    return this;
+  }
+
+  /**
+   * シェーディングを現在のクリップ範囲いっぱいに塗る。
+   * @param {string} name  Shading リソース名
+   */
+  shading(name) {
+    this.ops.push(`/${name} sh`);
     return this;
   }
 

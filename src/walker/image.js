@@ -262,3 +262,80 @@ export function objectFitToSize(fit) {
       return '100% 100%';
   }
 }
+
+/**
+ * `background-repeat` の computed 値を軸ごとに分ける。
+ * `repeat-x` / `repeat-y` は 2 値表記に展開する。
+ * @param {string} value
+ * @returns {['repeat'|'no-repeat'|'space'|'round', 'repeat'|'no-repeat'|'space'|'round']}
+ */
+export function splitRepeat(value) {
+  const v = (value || 'repeat').trim();
+  if (v === 'repeat-x') return ['repeat', 'no-repeat'];
+  if (v === 'repeat-y') return ['no-repeat', 'repeat'];
+  const parts = v.split(/\s+/);
+  const norm = (/** @type {string} */ s) => (s === 'repeat' || s === 'no-repeat' || s === 'space' || s === 'round' ? s : 'repeat');
+  const a = norm(/** @type {string} */ (parts[0] ?? 'repeat'));
+  const b = norm(/** @type {string} */ (parts[1] ?? parts[0] ?? 'repeat'));
+  return [a, b];
+}
+
+/**
+ * 1 軸ぶんのタイル位置を求める。
+ *
+ * - `repeat`: 指定位置を基準に、描画領域を覆うまで両方向へ並べる
+ * - `no-repeat`: 指定位置に 1 枚
+ * - `round`: 描画領域に整数個収まるようタイルの大きさを調整して並べる（大きさが変わる）
+ * - `space`: 整数個を等間隔に置き、余りを隙間に配る。1 枚しか入らないなら先頭に 1 枚
+ *
+ * @param {'repeat'|'no-repeat'|'space'|'round'} mode
+ * @param {number} start      指定位置（background-position の結果）
+ * @param {number} size       タイルの大きさ
+ * @param {number} areaStart  描画領域の開始
+ * @param {number} areaEnd    描画領域の終わり
+ * @returns {{positions: number[], size: number}}
+ */
+export function tileAxis(mode, start, size, areaStart, areaEnd) {
+  if (!(size > 0)) return { positions: [start], size };
+  const area = areaEnd - areaStart;
+  if (mode === 'no-repeat') return { positions: [start], size };
+
+  if (mode === 'round') {
+    const n = Math.max(1, Math.round(area / size));
+    const s = area / n;
+    return { positions: Array.from({ length: n }, (_, i) => areaStart + i * s), size: s };
+  }
+
+  if (mode === 'space') {
+    const n = Math.floor(area / size);
+    if (n < 2) return { positions: [areaStart], size };
+    const gap = (area - n * size) / (n - 1);
+    return { positions: Array.from({ length: n }, (_, i) => areaStart + i * (size + gap)), size };
+  }
+
+  // repeat: 指定位置から前後へ伸ばす
+  const first = start - Math.ceil((start - areaStart) / size) * size;
+  /** @type {number[]} */
+  const positions = [];
+  for (let p = first; p < areaEnd; p += size) {
+    if (p + size > areaStart) positions.push(p);
+    if (positions.length > 10000) break; // 異常な繰り返しの保険
+  }
+  return { positions: positions.length ? positions : [start], size };
+}
+
+/**
+ * 埋め込みが済んだ画像のピクセルデータを手放す。
+ * デコード結果（RGB・アルファ・JPEG のバイト列）は元画像より桁違いに大きいので、
+ * PDF に書き出したあとも抱えていると大きな文書でピーク使用量が跳ね上がる。
+ *
+ * キャッシュからも外すので、次の変換では読み直しになる（速度よりメモリを優先する）。
+ *
+ * @param {DecodedImage} img
+ */
+export function releasePixels(img) {
+  img.jpeg = null;
+  img.rgb = null;
+  img.alpha = null;
+  cache.delete(img.key);
+}

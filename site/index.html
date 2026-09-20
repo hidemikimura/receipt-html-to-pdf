@@ -86,7 +86,7 @@ downloadPdf(pdf, 'receipt.pdf');</code></pre>
   <p><code>dist/</code> の minify 済みファイルは依存ゼロの単一 ESM なので、CDN の URL をそのまま読めます。ビルドもバンドラーも要りません。</p>
   <pre><code>&lt;script type="module"&gt;
   import { registerFont, htmlToPdf, downloadPdf }
-    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
 &lt;/script&gt;</code></pre>
   <p>バージョンは固定してください。通常の <code>&lt;script&gt;</code> から呼びたい場合を含め、詳しくは <a href="./api.html#cdn">API リファレンスの「CDN から読み込む」</a>を見てください。</p>
 

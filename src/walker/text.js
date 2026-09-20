@@ -4,6 +4,7 @@
  * Range を 1 文字ずつ張って各グリフの矩形を実測し、行ごとにグリフ列（GID・ペン位置）を返す。
  * ブラウザのカーニング・letter-spacing・禁則・両端揃えの結果がそのまま位置に反映される。
  */
+import { buildSubstitution } from '../font/gsub.js';
 
 /**
  * @typedef {object} MeasuredLine
@@ -24,6 +25,7 @@
  * @property {'normal'|'italic'} fstyle
  * @property {number} size  px
  * @property {'font'|'measure'|'auto'} textMeasure
+ * @property {string[]} features  ブラウザが有効にしている OpenType 機能タグ（GSUB の単一置換を再現する）
  * @property {(w: import('../index.js').ConversionWarning) => void} warn
  * @property {Element} element
  */
@@ -73,10 +75,35 @@ export function measureText(node, style, o) {
     }
     cur.top = Math.min(cur.top, top);
     cur.bottom = Math.max(cur.bottom, rect.bottom);
-    const advance = ((font.parsed.advances[gid] ?? 0) * o.size) / font.parsed.unitsPerEm;
-    cur.glyphs.push({ gid, cp: cpForUnicode, x: rect.left, advance });
+    // GSUB（単一置換）: ブラウザが有効にした機能と同じ置換を適用する
+    const subst = o.features.length ? substitutionFor(font.parsed, o.features) : null;
+    const outGid = subst ? subst(gid) : gid;
+    const advance = ((font.parsed.advances[outGid] ?? 0) * o.size) / font.parsed.unitsPerEm;
+    cur.glyphs.push({ gid: outGid, cp: cpForUnicode, x: rect.left, advance });
   }
   return lines;
+}
+
+/** @type {WeakMap<import('../font/parse.js').ParsedFont, Map<string, ((gid: number) => number)|null>>} */
+const substCache = new WeakMap();
+
+/**
+ * (フォント, 機能集合) ごとの置換関数。結果は null も含めてキャッシュする。
+ * @param {import('../font/parse.js').ParsedFont} parsed
+ * @param {string[]} features
+ * @returns {((gid: number) => number)|null}
+ */
+function substitutionFor(parsed, features) {
+  let byKey = substCache.get(parsed);
+  if (!byKey) {
+    byKey = new Map();
+    substCache.set(parsed, byKey);
+  }
+  const key = [...features].sort().join(',');
+  if (byKey.has(key)) return byKey.get(key) ?? null;
+  const fn = buildSubstitution(parsed, features);
+  byKey.set(key, fn);
+  return fn;
 }
 
 /**

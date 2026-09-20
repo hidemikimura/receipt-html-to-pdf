@@ -15,10 +15,12 @@
 | `text-decoration: overline` / `wavy` / `dotted` | ❌ | 無視 |
 | `text-transform` | ✅ | 文字数が変わらない変換のみ（`ß → SS` は無視） |
 | `text-shadow` | ❌ | 警告 |
-| `font-variant-*` / `font-feature-settings` | ⚠️ | 位置は実測なので合うが、GSUB によるグリフ置換（合字・tabular-nums）は反映されない（標準グリフで描く） |
+| `font-variant-numeric` / `-caps` / `-east-asian` / `font-feature-settings` | ⚠️ | GSUB の**単一置換**（1 文字 → 1 文字）を再現する。`zero`（スラッシュ付きゼロ）、`jp78` / `jp83` / `jp90` / `jp04` / `nlck` / `trad` / `smpl`（異体字）、`fwid` / `hwid`、`smcp` など。**合字（`liga` / `dlig`）は未対応**（グリフ数が変わるため）。既定で有効な機能（`ccmp` / `liga` / `calt`）は適用しない |
 | `writing-mode: vertical-*` | ❌ | 警告。縦書きは v1.x |
 | `::before` / `::after` の `content` | ✅ | 引用文字列（`"※ "`、`\203B` エスケープ）のみ。`counter()` / `attr()` / `url()` は警告 |
 | `opacity` | ✅ | 子孫の色・画像に乗算。グループ透過（重なり部分の合成）ではない |
+
+数字の桁を揃えたい場合、`font-variant-numeric: tabular-nums` は**日本語フォントでは効かないことが多い**。BIZ UDPGothic・Noto Sans JP・M PLUS 1p・IBM Plex Sans JP・Zen Kaku Gothic New のいずれにも `tnum` 機能が無く、ブラウザ側でも何も起きない。等幅の数字が要るなら、数字の送り幅がもともと揃っているフォント（BIZ UD**G**othic、Noto Sans JP など）を選ぶか、表のセルを右揃え + 列幅固定にする。
 
 ## ボックス
 
@@ -28,8 +30,9 @@
 | `visibility: hidden` / `collapse` | ✅ | その要素自身（背景・ボーダー・テキスト）は描かないが、レイアウト上の場所は残るため PDF では空白になり、ページ分割の判定にも効く。子孫で `visibility: visible` に戻せばその子孫だけ描画する |
 | `background-color` | ✅ | border-box に塗る |
 | `background-image: url()` | ✅ | 単一の `url()` のみ。`background-size`（auto / cover / contain / 長さ / %）、`background-position`、`background-clip`、`background-origin` に対応 |
-| `background-repeat` | ⚠️ | `no-repeat` のみ。`repeat` 系は 1 回だけ描いて警告 |
-| グラデーション / 複数背景 | ❌ | 警告 |
+| `background-repeat` | ✅ | `repeat` / `no-repeat` / `repeat-x` / `repeat-y` / `space` / `round`（軸ごとの 2 値指定も可）。同じ画像 XObject を参照するタイルを並べるので、繰り返しても埋め込みは 1 回。タイルが 4000 枚を超える場合だけ 1 枚に落として警告する |
+| `background-image: linear-gradient()` | ✅ | PDF の軸シェーディング（ShadingType 2）でベクター出力。角度（`deg` / `to <side>`）、色止めの `%` / `px` / 位置省略 / 二重指定、色止めごとのアルファ（輝度ソフトマスクで再現）に対応。`in oklab` などの補間指定は無視して sRGB で近似 |
+| `repeating-linear-gradient` / `radial-gradient` / `conic-gradient` / 複数背景 | ❌ | 警告 |
 | `border-*-width` / `-style` / `-color` | ✅ | 辺ごと。`solid` は塗り矩形、`dashed` / `dotted` は破線ストローク、`double` / `groove` / `ridge` / `inset` / `outset` は solid で近似 |
 | `border-collapse: collapse` | ✅ | セル境界の中心に線を描き、隣接セルで二重にならないようにする |
 | `border-radius` | ✅ | 背景は角丸パス。ボーダーは 4 辺が同じ幅・色・スタイルのときだけ角丸ストローク、そうでなければ直線で近似して警告。楕円半径は水平方向の値で近似 |
@@ -55,7 +58,27 @@
 | `<img>` JPEG | ✅ | 3 成分 JPEG は再圧縮せず DCTDecode でそのまま埋め込む。CMYK / グレースケールは canvas 経由で RGB 化 |
 | `object-fit` / `object-position` | ✅ | fill / contain / cover / none / scale-down |
 | クロスオリジン画像 | ⚠️ | `crossorigin="anonymous"` と CORS ヘッダーが必要。無いと `image-failed` 警告で枠だけになる |
-| `<canvas>` / `<video>` / `<svg>`（インライン） | ❌ | 描かれない。`<svg>` は `<img src="x.svg">` にすれば画像として扱える |
+| `<canvas>` / `<video>` | ❌ | 描かれない |
+
+## インライン SVG
+
+DOM 上の `<svg>` は**ベクターのまま**パスに変換する（ラスタライズしない）。`viewBox` やプレゼンテーション属性の解決はブラウザに任せ、変換行列は `getScreenCTM()`、塗りと線は computed style から取る。`<svg>` はページ境界で分割しない。
+
+| 対象 | 対応 | 備考 |
+|---|---|---|
+| `<path>` | ✅ | `M L H V C S Q T A Z`（相対・絶対）。円弧と二次ベジェは 3 次ベジェへ変換 |
+| `<rect>`（`rx` / `ry` 含む） / `<circle>` / `<ellipse>` / `<line>` / `<polyline>` / `<polygon>` | ✅ | 幾何プロパティは computed style を優先するので `%` 指定も効く |
+| `<g>` / `<a>` / 入れ子の `<svg>` / `<switch>` | ✅ | 子をたどる |
+| `viewBox` / `preserveAspectRatio` / `transform` | ✅ | `getScreenCTM()` の結果をそのまま使う |
+| `fill` / `fill-opacity` / `fill-rule` | ✅ | `evenodd` は `f*` |
+| `stroke` / `-width` / `-opacity` / `-linecap` / `-linejoin` / `-miterlimit` / `-dasharray` / `-dashoffset` | ✅ | 線幅と破線はユーザー単位のまま出し、変換行列で拡大される（ブラウザと同じ） |
+| `opacity` / `display` / `visibility` | ✅ | 祖先の `opacity` は掛け合わせる |
+| `overflow`（`<svg>` の既定は hidden） | ✅ | ビューポートでクリップする |
+| `<text>` / `<tspan>` / `<textPath>` | ❌ | 警告して飛ばす。ロゴなら事前にパス化しておく |
+| `<use>` / `<image>` / `<foreignObject>` / `<marker>` | ❌ | 警告して飛ばす |
+| グラデーション・パターン（`fill="url(#id)"`） | ❌ | 警告して、その図形を飛ばす |
+| `clip-path` / `mask` / `filter` | ❌ | 無視する（図形はそのまま描かれる） |
+| `<img src="x.svg">` | ⚠️ | 従来どおりラスタライズして画像として埋め込む。ベクターにしたいならインラインで置く |
 
 ## 変形
 
@@ -73,7 +96,8 @@
 | テキスト行・`<tr>`・`<thead>`・`<tfoot>`・`<img>` | ✅ | 常に分割しない |
 | `<thead>` の繰り返し | ✅ | 表が次ページへ続くとき、先頭に thead を再描画 |
 | `<tfoot>` の繰り返し | ✅ | 表が次ページへ続くとき、そのページの最後の行の直下に tfoot を再描画（ブラウザ印刷と同じ位置） |
-| `break-before: avoid` / `break-after: avoid` / `orphans` / `widows` | ❌ | 無視（`break-inside: avoid` で代替） |
+| `break-before: avoid` / `break-after: avoid`（`page-break-*: avoid`） | ✅ | 隣の箱と同じページに保つ。見出しがページ末尾に取り残されるのを防ぐ用途。兄弟が無ければ親をさかのぼって次（前）の箱と結ぶ |
+| `orphans` / `widows` | ❌ | 無視（行数単位の制御は未対応） |
 | `@page` | ❌ | 用紙サイズ・余白は `options.page` で指定 |
 | `@media print` | ✅ | `mediaPrint: true` で `@media print {}` の中身を通常ルールとして適用（`@media screen {}` は除去） |
 | ヘッダー／フッター | ✅ | `options.header` / `options.footer` の HTML テンプレート。`{{pageNumber}}` `{{totalPages}}` |

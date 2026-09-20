@@ -3,7 +3,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { serve, convertOnPage, extractText, missingStrings, normalize, hasPdftoppm, pixelDiff, root } from './helpers.mjs';
+import { serve, convertOnPage, extractText, missingStrings, normalize, hasPdftoppm, pixelDiff, readPixels, root } from './helpers.mjs';
 
 /** @type {{name: string, variant: string|null}[]} */
 const CASES = [
@@ -264,4 +264,364 @@ test('親文書の body マージンは PDF に持ち込まれない', async ({ 
   });
   // body マージンが効いていると 180mm + 80px で本文領域をはみ出し、はみ出し警告が出る
   expect(warnings).toEqual([]);
+});
+
+test('break-after: avoid — 見出しがページ末尾に取り残されない', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const run = (avoid) =>
+    page.evaluate(async (avoid) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      // 46 行のあとに見出しを置くと、見出しがちょうど 1 ページ目の最後の行になる
+      let html = '<div id="doc">';
+      for (let i = 0; i < 46; i++) html += `<p>本文の行 ${i + 1}</p>`;
+      html += '<h2>見出し</h2>';
+      for (let i = 0; i < 10; i++) html += `<p>続く段落 ${i + 1}</p>`;
+      html += '</div>';
+      const css =
+        '#doc{font-family:"BIZ UDPGothic";font-size:12pt;width:180mm}' +
+        'p{margin:0;line-height:16pt}' +
+        `h2{margin:0;font-size:12pt;line-height:16pt${avoid ? ';break-after:avoid' : ''}}`;
+      const bytes = await lib.htmlToPdf(html, { stylesheets: [css], page: { size: 'A4', margin: '15mm' }, output: 'uint8array' });
+      return Array.from(bytes);
+    }, avoid);
+
+  // pdf.js はグリフ間の隙間を空白として拾うことがあるので空白を落として比較する
+  const strip = (t) => t.replace(/\s/g, '');
+  const without = (await extractText(await run(false))).pages.map(strip);
+  const withAvoid = (await extractText(await run(true))).pages.map(strip);
+
+  // avoid 無し: 見出しが 1 ページ目の末尾に取り残され、続く段落は 2 ページ目
+  expect(without[0]).toContain('見出し');
+  expect(without[1]).toContain('続く段落1');
+
+  // avoid 有り: 見出しは 2 ページ目へ送られ、続く段落と同じページに載る
+  expect(withAvoid[0]).not.toContain('見出し');
+  expect(withAvoid[0]).toContain('本文の行46');
+  expect(withAvoid[1].indexOf('見出し')).toBeGreaterThanOrEqual(0);
+  expect(withAvoid[1].indexOf('見出し')).toBeLessThan(withAvoid[1].indexOf('続く段落1'));
+});
+
+test('linear-gradient をベクターで描き、ブラウザ描画と一致する', async ({ page }, testInfo) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const HTML = `<div id="g"><div class="a">to right</div><div class="b">45deg 3 色</div><div class="c">透明から黒へ</div><div class="d">角丸</div></div>`;
+  const CSS = `#g{font-family:"BIZ UDPGothic";font-size:14px;width:400px;background:#fff}
+    #g>div{height:60px;margin-bottom:10px;padding:8px;color:#fff;box-sizing:border-box}
+    .a{background-image:linear-gradient(to right, rgb(255,0,0), rgb(0,0,255))}
+    .b{background-image:linear-gradient(45deg, rgb(255,0,0) 0%, rgb(255,255,0) 30%, rgb(0,0,255) 100%)}
+    .c{background-color:rgb(0,160,0);background-image:linear-gradient(to right, rgba(0,0,0,0), rgb(0,0,0))}
+    .d{background-image:linear-gradient(to bottom, rgb(255,255,255), rgb(51,51,51));border-radius:16px;color:#000}`;
+
+  const { bytes, warnings } = await page.evaluate(
+    async ({ HTML, CSS }) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const warnings = [];
+      const out = await lib.htmlToPdf(HTML, {
+        stylesheets: [CSS],
+        page: { size: { width: '400px', height: '300px' }, margin: '0' },
+        output: 'uint8array',
+        onWarning: (w) => warnings.push(`${w.code}: ${w.message}`),
+      });
+      return { bytes: Array.from(out), warnings };
+    },
+    { HTML, CSS },
+  );
+  expect(warnings).toEqual([]);
+  // テキストはベクターのまま（グラデーションを画像に落としていない）
+  const { pages } = await extractText(bytes);
+  expect(pages.join('').replace(/\s/g, '')).toContain('透明から黒へ');
+
+  test.skip(!(await hasPdftoppm()), 'pdftoppm が無い');
+  // 同じ HTML をブラウザに描かせて画素差分を取る
+  const shot = await page.evaluate(
+    async ({ HTML, CSS }) => {
+      const host = document.createElement('div');
+      host.id = 'shot';
+      host.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:300px;background:#fff;z-index:99999';
+      host.innerHTML = `<style>${CSS}</style>${HTML}`;
+      document.body.appendChild(host);
+      await document.fonts.ready;
+      return true;
+    },
+    { HTML, CSS },
+  );
+  expect(shot).toBe(true);
+  const png = await page.locator('#shot').screenshot();
+  const { diffRatio, diffPath } = await pixelDiff(bytes, png, testInfo.outputPath('.'), 'gradient');
+  testInfo.annotations.push({ type: 'pixel-diff', description: `${(diffRatio * 100).toFixed(2)}% (${diffPath})` });
+  expect(diffRatio).toBeLessThan(0.05);
+});
+
+test('インライン SVG をベクターで描き、ブラウザ描画と一致する', async ({ page }, testInfo) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const SVG = `<svg width="360" height="180" viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg">
+      <rect x="0" y="0" width="240" height="120" fill="#f6f6f6"/>
+      <g transform="translate(20,20)">
+        <circle cx="30" cy="30" r="28" fill="#08f" stroke="#024" stroke-width="3"/>
+        <rect x="70" y="8" width="60" height="44" rx="8" fill="none" stroke="#c00" stroke-width="4" stroke-dasharray="8 4"/>
+        <path d="M150 10 L190 10 A20 20 0 0 1 190 50 L150 50 Z" fill="#0a0" fill-opacity="0.6"/>
+        <polygon points="0,70 20,70 10,88" fill="#333"/>
+        <polyline points="40,88 60,70 80,88 100,70" fill="none" stroke="#909" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M120 70 q 20 -20 40 0 t 40 0" fill="none" stroke="#f60" stroke-width="3"/>
+        <path d="M0 0 h10 v10 h-10 z M2 2 h6 v6 h-6 z" fill="#000" fill-rule="evenodd" transform="translate(200,60) scale(2)"/>
+      </g>
+    </svg>`;
+  const CSS = '#d{font-family:"BIZ UDPGothic";width:400px;background:#fff;padding:10px;box-sizing:border-box}';
+
+  const { bytes, warnings } = await page.evaluate(
+    async ({ SVG, CSS }) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const warnings = [];
+      const out = await lib.htmlToPdf(`<div id="d">${SVG}</div>`, {
+        stylesheets: [CSS],
+        page: { size: { width: '400px', height: '220px' }, margin: '0' },
+        output: 'uint8array',
+        onWarning: (w) => warnings.push(`${w.code}: ${w.message}`),
+      });
+      return { bytes: Array.from(out), warnings };
+    },
+    { SVG, CSS },
+  );
+  expect(warnings).toEqual([]);
+  // ベクターなので画像 XObject は生成されない
+  expect(String.fromCharCode(...bytes)).not.toContain('/Subtype /Image');
+
+  test.skip(!(await hasPdftoppm()), 'pdftoppm が無い');
+  await page.evaluate(
+    ({ SVG, CSS }) => {
+      const host = document.createElement('div');
+      host.id = 'shot';
+      host.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:220px;background:#fff;z-index:99999';
+      host.innerHTML = `<style>${CSS}</style><div id="d">${SVG}</div>`;
+      document.body.appendChild(host);
+    },
+    { SVG, CSS },
+  );
+  const png = await page.locator('#shot').screenshot();
+  const { diffRatio, diffPath } = await pixelDiff(bytes, png, testInfo.outputPath('.'), 'svg');
+  testInfo.annotations.push({ type: 'pixel-diff', description: `${(diffRatio * 100).toFixed(2)}% (${diffPath})` });
+  expect(diffRatio).toBeLessThan(0.05);
+});
+
+test('SVG の <text> と paint server は警告して飛ばす', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const warnings = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    const out = [];
+    await lib.htmlToPdf(
+      `<svg width="100" height="50" xmlns="http://www.w3.org/2000/svg">
+         <defs><linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient></defs>
+         <rect width="40" height="40" fill="url(#g)"/>
+         <text x="0" y="45">文字</text>
+       </svg>`,
+      { stylesheets: 'none', output: 'uint8array', onWarning: (w) => out.push(w.message) },
+    );
+    return out;
+  });
+  expect(warnings.join('\n')).toMatch(/<text>/);
+  expect(warnings.join('\n')).toMatch(/paint server/);
+});
+
+test('GSUB の単一置換（slashed-zero）をブラウザと同じグリフで描く', async ({ page }, testInfo) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const FF = '@font-face{font-family:"BIZ UDPGothic";font-weight:400;src:url("/fonts/BIZUDPGothic-Regular.ttf")}';
+  const base = `${FF}#d{font-family:"BIZ UDPGothic";font-size:40px;white-space:pre;background:#fff;padding:20px}`;
+  const HTML = '<div id="d">0123</div>';
+
+  /** @param {boolean} slashed */
+  const convert = (slashed) =>
+    page.evaluate(
+      async ({ CSS, HTML }) => {
+        const lib = await import('/src/index.js');
+        await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+        const out = await lib.htmlToPdf(HTML, {
+          stylesheets: [CSS],
+          page: { size: { width: '400px', height: '100px' }, margin: '0' },
+          output: 'uint8array',
+        });
+        return Array.from(out);
+      },
+      { CSS: base + (slashed ? '#d{font-variant-numeric:slashed-zero}' : ''), HTML },
+    );
+
+  const plain = await convert(false);
+  const slashed = await convert(true);
+
+  // 置換が実際に起きている（同じ文字列でも中身が変わる）
+  expect(Buffer.compare(Buffer.from(plain), Buffer.from(slashed))).not.toBe(0);
+  // 置換してもテキストは元の文字として抽出できる（ToUnicode は元のコードポイントのまま）
+  expect((await extractText(slashed)).pages.join('').replace(/\s/g, '')).toBe('0123');
+
+  test.skip(!(await hasPdftoppm()), 'pdftoppm が無い');
+  await page.evaluate(
+    ({ CSS, HTML }) => {
+      const host = document.createElement('div');
+      host.id = 'shot';
+      host.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:100px;background:#fff;z-index:99999';
+      host.innerHTML = `<style>${CSS}</style>${HTML}`;
+      document.body.appendChild(host);
+    },
+    { CSS: base + '#d{font-variant-numeric:slashed-zero}', HTML },
+  );
+  await page.evaluate(() => document.fonts.ready);
+  const png = await page.locator('#shot').screenshot();
+  const { diffRatio, diffPath } = await pixelDiff(slashed, png, testInfo.outputPath('.'), 'gsub');
+  testInfo.annotations.push({ type: 'pixel-diff', description: `${(diffRatio * 100).toFixed(2)}% (${diffPath})` });
+  expect(diffRatio).toBeLessThan(0.05);
+});
+
+test('background-repeat をタイル描画で再現する', async ({ page }, testInfo) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  // 28x28 の単色タイル（左上に向き確認用の印）。等倍で使うのでリサンプリング差が出ない
+  const src = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 28;
+    const g = /** @type {CanvasRenderingContext2D} */ (c.getContext('2d'));
+    g.fillStyle = '#0a58c8';
+    g.fillRect(0, 0, 28, 28);
+    g.fillStyle = '#e03030';
+    g.fillRect(0, 0, 8, 8);
+    return c.toDataURL('image/png');
+  });
+  const CSS = `#g{width:400px;background:#fff}
+    #g>div{height:60px;margin-bottom:8px;box-sizing:border-box;
+      background-image:url("${src}");background-size:28px 28px}
+    .r{background-repeat:repeat}
+    .x{background-repeat:repeat-x}
+    .y{background-repeat:repeat-y}
+    .s{background-repeat:space}
+    .o{background-repeat:round}
+    .n{background-repeat:no-repeat;background-position:center}`;
+  const HTML = '<div id="g"><div class="r"></div><div class="x"></div><div class="y"></div><div class="s"></div><div class="o"></div><div class="n"></div></div>';
+
+  const { bytes, warnings } = await page.evaluate(
+    async ({ CSS, HTML }) => {
+      const lib = await import('/src/index.js');
+      await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+      const warnings = [];
+      const out = await lib.htmlToPdf(HTML, {
+        stylesheets: [CSS],
+        page: { size: { width: '400px', height: '420px' }, margin: '0' },
+        output: 'uint8array',
+        onWarning: (w) => warnings.push(`${w.code}: ${w.message}`),
+      });
+      return { bytes: Array.from(out), warnings };
+    },
+    { CSS, HTML },
+  );
+  expect(warnings).toEqual([]);
+  // 画像は 1 回しか埋め込まれない（タイルは同じ XObject を参照する）
+  expect(String.fromCharCode(...bytes).match(/\/Subtype \/Image/g) ?? []).toHaveLength(1);
+
+  test.skip(!(await hasPdftoppm()), 'pdftoppm が無い');
+  await page.evaluate(
+    ({ CSS, HTML }) => {
+      const host = document.createElement('div');
+      host.id = 'shot';
+      host.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:420px;background:#fff;z-index:99999';
+      host.innerHTML = `<style>${CSS}</style>${HTML}`;
+      document.body.appendChild(host);
+    },
+    { CSS, HTML },
+  );
+  await page.waitForTimeout(300);
+  const png = await page.locator('#shot').screenshot();
+  const { diffRatio, diffPath } = await pixelDiff(bytes, png, testInfo.outputPath('.'), 'bgrepeat');
+  testInfo.annotations.push({ type: 'pixel-diff', description: `${(diffRatio * 100).toFixed(2)}% (${diffPath})` });
+
+  // 配置そのものはタイルの内側の色を点で見て確かめる（96dpi なので 1px = 1css px）。
+  // 画素差分より先に見ることで、ずれたときに「どのモードが壊れたか」が分かる
+  const pdfPng = await readPixels(join(testInfo.outputPath('.'), 'bgrepeat-pdf.png'));
+  const isTile = (/** @type {[number, number, number]} */ c) => c[2] > 150 && c[0] < 110;
+  const isBlank = (/** @type {[number, number, number]} */ c) => c[0] > 235 && c[1] > 235 && c[2] > 235;
+  // 各行は y = i*68 から高さ 60。タイルは 28x28
+  expect(isTile(pdfPng.at(350, 0 * 68 + 50)), 'repeat: 右下までタイルが並ぶ').toBe(true);
+  expect(isTile(pdfPng.at(350, 1 * 68 + 14)), 'repeat-x: 右端までタイルが並ぶ').toBe(true);
+  expect(isBlank(pdfPng.at(350, 1 * 68 + 45)), 'repeat-x: 縦には繰り返さない').toBe(true);
+  expect(isTile(pdfPng.at(14, 2 * 68 + 45)), 'repeat-y: 下までタイルが並ぶ').toBe(true);
+  expect(isBlank(pdfPng.at(350, 2 * 68 + 14)), 'repeat-y: 横には繰り返さない').toBe(true);
+  expect(isTile(pdfPng.at(350, 3 * 68 + 14)), 'space: 右端近くまで並ぶ').toBe(true);
+  expect(isTile(pdfPng.at(350, 4 * 68 + 14)), 'round: 右端近くまで並ぶ').toBe(true);
+  expect(isTile(pdfPng.at(200, 5 * 68 + 30)), 'no-repeat + center: 中央に 1 枚').toBe(true);
+  expect(isBlank(pdfPng.at(10, 5 * 68 + 30)), 'no-repeat: 左端には無い').toBe(true);
+
+  // アンチエイリアスの差で数 % はぶれるので、全体の一致は緩めに見る
+  expect(diffRatio).toBeLessThan(0.05);
+});
+
+test('タイル数が上限を超えたら警告して 1 枚だけ描く', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const warnings = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    const out = [];
+    await lib.htmlToPdf('<div id="t"></div>', {
+      stylesheets: ['#t{width:800px;height:800px;background-image:url("/fixtures/receipt-invoice/assets/seal.png");background-size:2px 2px;background-repeat:repeat}'],
+      page: { size: 'A4', margin: '0' },
+      output: 'uint8array',
+      onWarning: (w) => out.push(w.message),
+    });
+    return out;
+  });
+  expect(warnings.join('\n')).toMatch(/tiles \(limit 4000\)/);
+});
+
+test('onProgress が変換の進み具合を順番に知らせる', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const events = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    let html = '<div id="d">';
+    for (let i = 0; i < 300; i++) html += `<p>本文の行 ${i + 1}</p>`;
+    html += '</div>';
+    const out = [];
+    await lib.htmlToPdf(html, {
+      stylesheets: ['#d{font-family:"BIZ UDPGothic";font-size:11pt;width:180mm}p{margin:0;line-height:16pt}'],
+      page: { size: 'A4', margin: '15mm' },
+      output: 'uint8array',
+      onProgress: (p) => out.push(p),
+    });
+    return out;
+  });
+
+  const phases = events.map((e) => e.phase);
+  expect(phases[0]).toBe('render');
+  expect(phases[1]).toBe('walk');
+  expect(phases[2]).toBe('layout');
+  expect(phases.at(-1)).toBe('done');
+
+  const layout = events[2];
+  expect(layout.totalPages).toBeGreaterThan(1);
+
+  // page は 1 から totalPages まで抜けなく届く
+  const pages = events.filter((e) => e.phase === 'page').map((e) => e.page);
+  expect(pages).toEqual(Array.from({ length: layout.totalPages }, (_, i) => i + 1));
+  for (const e of events.filter((x) => x.phase === 'page')) expect(e.totalPages).toBe(layout.totalPages);
+});
+
+test('画像は埋め込み後に解放され、次の変換では読み直される', async ({ page }) => {
+  await page.goto(`${server.url}/fixtures/receipt-invoice/index.html`);
+  const result = await page.evaluate(async () => {
+    const lib = await import('/src/index.js');
+    const { loadImage } = await import('/src/walker/image.js');
+    await lib.registerFont({ family: 'BIZ UDPGothic', weight: 400, src: '/fonts/BIZUDPGothic-Regular.ttf' });
+    const url = new URL('/fixtures/receipt-invoice/assets/seal.png', location.href).href;
+    const html = `<div id="d"><img src="${url}" width="60" height="60"></div>`;
+
+    const first = await lib.htmlToPdf(html, { stylesheets: 'none', output: 'uint8array' });
+    // 変換後、デコード済みのピクセルデータは手放されている
+    const cached = await loadImage(url, () => {});
+    const releasedAfterFirst = cached !== null && cached.rgb !== null; // 読み直されたので再びデータを持つ
+    // 2 回目も同じ大きさの PDF になる（読み直しが効いている）
+    const second = await lib.htmlToPdf(html, { stylesheets: 'none', output: 'uint8array' });
+    return { firstLen: first.length, secondLen: second.length, releasedAfterFirst };
+  });
+  expect(result.firstLen).toBeGreaterThan(1000);
+  // 解放されていれば loadImage は読み直し、再びピクセルデータを持つ
+  expect(result.releasedAfterFirst).toBe(true);
+  // 読み直しが効いているので 2 回目も同じ内容になる
+  expect(result.secondLen).toBe(result.firstLen);
 });

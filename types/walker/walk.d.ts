@@ -117,7 +117,43 @@ export type ClipItem = {
     z: number;
     seq: number;
 };
-export type DisplayItem = RectItem | LineItem | StrokeRRectItem | ImageItem | TextItem | GroupItem | ClipItem;
+/**
+ * linear-gradient（box はグラデーションの基準領域、clip は描画範囲）
+ */
+export type GradientItem = {
+    type: "gradient";
+    box: Box;
+    clip: Box;
+    gradient: import("./gradient.js").LinearGradient;
+    alpha: number;
+    z: number;
+    seq: number;
+};
+export type PathStroke = {
+    color: Rgba;
+    width: number;
+    cap: 0 | 1 | 2;
+    join: 0 | 1 | 2;
+    miter: number;
+    dash: number[] | null;
+    dashOffset: number;
+};
+/**
+ * インライン SVG の図形（matrix はユーザー単位 → ドキュメント px）
+ */
+export type PathItem = {
+    type: "path";
+    segs: import("./svg-path.js").PathSeg[];
+    matrix: [number, number, number, number, number, number];
+    fill: Rgba | null;
+    evenOdd: boolean;
+    stroke: PathStroke | null;
+    top: number;
+    bottom: number;
+    z: number;
+    seq: number;
+};
+export type DisplayItem = RectItem | LineItem | StrokeRRectItem | ImageItem | TextItem | GroupItem | ClipItem | GradientItem | PathItem;
 /**
  * ページ境界を跨いではいけない縦範囲（行・表の行・画像・break-inside: avoid）
  */
@@ -135,10 +171,19 @@ export type TableInfo = {
     footBottom: number;
     footItems: DisplayItem[];
 };
+/**
+ * break-before/after: avoid — [start, end] に境界を置かず、置きそうなら pullTo まで戻す
+ */
+export type Join = {
+    start: number;
+    end: number;
+    pullTo: number;
+};
 export type WalkResult = {
     items: DisplayItem[];
     atoms: Atom[];
     breaks: number[];
+    joins: Join[];
     tables: TableInfo[];
     height: number;
 };
@@ -147,4 +192,8 @@ export type WalkContext = {
     fontFallback: string[];
     warn: (w: import("../index.js").ConversionWarning) => void;
     textMeasure: "font" | "measure" | "auto";
+    /**
+     * 長い走査で途中イベントループへ戻すための譲渡
+     */
+    pacer?: import("../pacer.js").Pacer | undefined;
 };

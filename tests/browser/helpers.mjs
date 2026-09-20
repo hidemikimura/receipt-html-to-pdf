@@ -157,3 +157,21 @@ function downscale(img, k) {
 }
 
 export { existsSync };
+
+/**
+ * PNG を読み、座標の色を引ける形にする。
+ * 画素差分の閾値はアンチエイリアスでぶれるので、タイルの内側の色を点で見たいときに使う。
+ * @param {string} path
+ */
+export async function readPixels(path) {
+  const png = PNG.sync.read(await readFile(path));
+  return {
+    width: png.width,
+    height: png.height,
+    /** @param {number} x @param {number} y @returns {[number, number, number]} */
+    at(x, y) {
+      const i = (Math.round(y) * png.width + Math.round(x)) * 4;
+      return [png.data[i], png.data[i + 1], png.data[i + 2]];
+    },
+  };
+}

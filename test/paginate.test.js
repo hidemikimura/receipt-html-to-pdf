@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { paginate } from '../src/paginate.js';
 
 /** @param {Partial<import('../src/walker/walk.js').WalkResult>} w */
-const walk = (w) => /** @type {import('../src/walker/walk.js').WalkResult} */ ({ items: [], atoms: [], breaks: [], tables: [], height: 0, ...w });
+const walk = (w) => /** @type {import('../src/walker/walk.js').WalkResult} */ ({ items: [], atoms: [], breaks: [], joins: [], tables: [], height: 0, ...w });
 
 describe('paginate', () => {
   it('1 ページに収まるなら分割しない', () => {
@@ -29,6 +29,65 @@ describe('paginate', () => {
     ];
     const pages = paginate(walk({ height: 1500, atoms }), 1000);
     expect(pages[0]?.end).toBe(900);
+  });
+
+  it('break-after: avoid — 見出しと次のブロックの間で切らない', () => {
+    // 見出し 960〜990、次の段落の 1 行目 990〜1020。行を跨がないよう境界が 990 に上がると
+    // ちょうど見出しと段落の間になるので、見出しごと次ページへ送る
+    const atoms = [
+      { top: 960, bottom: 990 }, // 見出しの行
+      { top: 990, bottom: 1020 }, // 段落の 1 行目
+    ];
+    const joins = [{ start: 990, end: 990, pullTo: 960 }];
+    const pages = paginate(walk({ height: 2000, atoms, joins }), 1000);
+    expect(pages[0]?.end).toBe(960);
+  });
+
+  it('break-after: avoid — 境界が次のブロックの途中なら何もしない', () => {
+    // 境界 1000 は段落の 2 行目以降に落ちるので、見出しと段落は同じページに載っている
+    const atoms = [
+      { top: 960, bottom: 990 },
+      { top: 990, bottom: 1000 },
+      { top: 1000, bottom: 1030 },
+    ];
+    const joins = [{ start: 990, end: 990, pullTo: 960 }];
+    const pages = paginate(walk({ height: 2000, atoms, joins }), 1000);
+    expect(pages[0]?.end).toBe(1000);
+  });
+
+  it('break-before: avoid — 直前のブロックと離さない', () => {
+    const joins = [{ start: 800, end: 850, pullTo: 700 }];
+    const pages = paginate(walk({ height: 2000, joins }), 820);
+    expect(pages[0]?.end).toBe(700);
+  });
+
+  it('avoid の連鎖（見出しが 2 つ続く）も遡る', () => {
+    // 見出し A 920〜950、見出し B 950〜980、本文 1 行目 980〜1010
+    const atoms = [
+      { top: 920, bottom: 950 },
+      { top: 950, bottom: 980 },
+      { top: 980, bottom: 1010 },
+    ];
+    const joins = [
+      { start: 980, end: 980, pullTo: 950 }, // 見出し B と本文
+      { start: 950, end: 950, pullTo: 920 }, // 見出し A と見出し B
+    ];
+    const pages = paginate(walk({ height: 2000, atoms, joins }), 1000);
+    expect(pages[0]?.end).toBe(920);
+  });
+
+  it('結んだ範囲がページに収まらない avoid は諦める', () => {
+    // 1500px 分を結んでいるのでページ（1000）に収まらない。容量いっぱいで切る
+    const joins = [{ start: 900, end: 1000, pullTo: 0 }];
+    const pages = paginate(walk({ height: 2000, joins }), 1000);
+    expect(pages[0]?.end).toBe(1000);
+  });
+
+  it('戻すとページが空になる avoid は諦める', () => {
+    // ページ先頭（0）が戻し先なので戻せない
+    const joins = [{ start: 500, end: 500, pullTo: 0 }];
+    const pages = paginate(walk({ height: 2000, joins }), 500);
+    expect(pages[0]?.end).toBe(500);
   });
 
   it('ページより大きいアトムは容量いっぱいで切る（空ページを作らない）', () => {

@@ -9,6 +9,8 @@ import { EmbeddedFont, hex4 } from './font/cid.js';
 import { embedImage } from './pdf/image.js';
 import { PX_TO_PT, PAGE_SIZES, lengthToPt, num } from './units.js';
 import { paginate } from './paginate.js';
+import { releasePixels, loadImage } from './walker/image.js';
+import { buildAxialShading, uniformAlpha, buildAlphaMaskGState } from './pdf/shading.js';
 
 /**
  * @typedef {object} PageGeometry
@@ -56,7 +58,7 @@ export function resolvePage(page = {}) {
 /**
  * @param {import('./walker/walk.js').WalkResult} body
  * @param {PageGeometry} geo
- * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null}} opts
+ * @param {{compress: boolean, metadata?: import('./index.js').PdfMetadata, header?: PageDecoration|null, footer?: PageDecoration|null, pacer?: import('./pacer.js').Pacer, progress?: (p: import('./index.js').ConversionProgress) => void, warn?: (w: import('./index.js').ConversionWarning) => void}} opts
  * @returns {Promise<Uint8Array>}
  */
 export async function buildPdf(body, geo, opts) {
@@ -113,33 +115,77 @@ export async function buildPdf(body, geo, opts) {
   for (const ef of fonts.values()) fontDict[ef.resourceName] = await ef.embed(writer);
   /** @type {{[key: string]: import('./pdf/writer.js').PdfValue}} */
   const xobjDict = {};
-  for (const im of images.values()) xobjDict[im.name] = await embedImage(writer, im.image);
+  for (const im of images.values()) {
+    let img = im.image;
+    // 並行して走る別の変換が先に解放していた場合は読み直す
+    if (!img.jpeg && !img.rgb) {
+      const again = await loadImage(img.key, opts.warn ?? (() => {}));
+      if (!again) continue;
+      img = again;
+    }
+    xobjDict[im.name] = await embedImage(writer, img);
+    // 埋め込みが済めばピクセルデータは不要。大きな文書のピーク使用量を抑える
+    releasePixels(img);
+    if (opts.pacer) await opts.pacer();
+  }
 
   // ExtGState（透明度）
   /** @type {Map<string, string>} */
   const gstates = new Map();
   /** @type {{[key: string]: import('./pdf/writer.js').PdfValue}} */
   const gstateDict = {};
-  const gsName = (/** @type {number} */ a) => {
-    const key = num(a);
+  const gsName = (/** @type {number} */ a, /** @type {number} */ strokeA = a) => {
+    const key = `${num(a)}/${num(strokeA)}`;
     let name = gstates.get(key);
     if (!name) {
       name = `GS${gstates.size + 1}`;
       gstates.set(key, name);
-      gstateDict[name] = writer.add({ Type: 'ExtGState', ca: a, CA: a });
+      gstateDict[name] = writer.add({ Type: 'ExtGState', ca: a, CA: strokeA });
     }
     return name;
   };
+
+  // Shading（linear-gradient）。座標は箱ローカルの CSS px で持ち、描画時に cm で用紙座標へ写す。
+  // こうするとページごとに作り直さずに済む。
+  /** @type {{[key: string]: import('./pdf/writer.js').PdfValue}} */
+  const shadingDict = {};
+  /** @type {Map<import('./walker/walk.js').DisplayItem, {sh: string, gs: string|null}>} */
+  const gradients = new Map();
+  /** @param {import('./walker/walk.js').DisplayItem[]} list */
+  const prepareGradients = async (list) => {
+    for (const it of list) {
+      if (it.type === 'gradient') {
+        const name = `Sh${Object.keys(shadingDict).length + 1}`;
+        shadingDict[name] = buildAxialShading(writer, it.gradient, it.gradient.stops, 'rgb');
+        const alpha = uniformAlpha(it.gradient.stops);
+        let gs = null;
+        if (alpha === null) {
+          // 色止めごとにアルファが変わる → 輝度ソフトマスクで再現する
+          const gsRef = await buildAlphaMaskGState(writer, it.gradient, it.gradient.stops, { x: 0, y: 0, w: it.box.w, h: it.box.h }, it.alpha);
+          gs = `GM${gradients.size + 1}`;
+          gstateDict[gs] = gsRef;
+        }
+        gradients.set(it, { sh: name, gs });
+      } else if (it.type === 'group' || it.type === 'clip') {
+        await prepareGradients(it.items);
+      }
+    }
+  };
+  await prepareGradients(body.items);
+  for (const w of [...headers, ...footers]) if (w) await prepareGradients(w.items);
 
   const pagesRef = writer.reserve();
   /** @type {import('./pdf/writer.js').Ref[]} */
   const pageRefs = [];
 
   // 4. ページごとに描画
+  opts.progress?.({ phase: 'layout', totalPages });
   for (let p = 0; p < totalPages; p++) {
+    if (opts.pacer) await opts.pacer();
+    opts.progress?.({ phase: 'page', page: p + 1, totalPages });
     const range = /** @type {import('./paginate.js').PageRange} */ (ranges[p]);
     const cs = new ContentStream();
-    const painter = new Painter(cs, geo, fonts, images, gsName);
+    const painter = new Painter(cs, geo, fonts, images, gsName, gradients);
 
     // 本文: ドキュメント y = range.start が本文領域の上端 + 繰り返し thead の高さ に来る
     const bodyShiftPt = range.headShift * PX_TO_PT;
@@ -200,6 +246,7 @@ export async function buildPdf(body, geo, opts) {
           Font: fontDict,
           XObject: xobjDict,
           ExtGState: gstateDict,
+          Shading: shadingDict,
           ProcSet: [new Name('PDF'), new Name('Text'), new Name('ImageC')],
         },
         Contents: contentRef,
@@ -252,14 +299,16 @@ class Painter {
    * @param {PageGeometry} geo
    * @param {Map<import('./font/registry.js').RegisteredFont, EmbeddedFont>} fonts
    * @param {Map<string, {name: string, image: import('./walker/image.js').DecodedImage}>} images
-   * @param {(alpha: number) => string} gsName
+   * @param {(alpha: number, strokeAlpha?: number) => string} gsName
+   * @param {Map<import('./walker/walk.js').DisplayItem, {sh: string, gs: string|null}>} gradients
    */
-  constructor(cs, geo, fonts, images, gsName) {
+  constructor(cs, geo, fonts, images, gsName, gradients) {
     this.cs = cs;
     this.geo = geo;
     this.fonts = fonts;
     this.images = images;
     this.gsName = gsName;
+    this.gradients = gradients;
     this.pdfTop = geo.height - geo.top;
     this.docTop = 0;
     this.curAlpha = 1;
@@ -339,6 +388,46 @@ class Painter {
         cs.roundedRect(this.X(it.x), this.Y(it.y + it.h), it.w * PX_TO_PT, it.h * PX_TO_PT, this.radiusPt(it.radius)).stroke();
         cs.restore();
         this.curAlpha = 1;
+      } else if (it.type === 'path') {
+        if (!it.segs.length) continue;
+        const [a, b2, c, d, e, f] = it.matrix;
+        // ユーザー単位 → ドキュメント px → PDF pt（y 反転）を 1 つの行列にまとめる
+        const S = PX_TO_PT;
+        const tx = this.geo.left;
+        const ty = this.pdfTop + this.docTop * S;
+        cs.save();
+        cs.transform(S * a, -S * b2, S * c, -S * d, S * e + tx, -S * f + ty);
+        if (it.fill) cs.fillColor(it.fill.r, it.fill.g, it.fill.b);
+        if (it.stroke) {
+          cs.strokeColor(it.stroke.color.r, it.stroke.color.g, it.stroke.color.b);
+          cs.lineWidth(it.stroke.width);
+          cs.lineCap(it.stroke.cap);
+          cs.lineJoin(it.stroke.join);
+          if (it.stroke.join === 0) cs.miterLimit(it.stroke.miter);
+          if (it.stroke.dash) cs.dash(it.stroke.dash, it.stroke.dashOffset);
+        }
+        // 塗りと線でアルファが違うことがあるので ExtGState には両方を渡す
+        const fa = it.fill ? it.fill.a : 1;
+        const sa = it.stroke ? it.stroke.color.a : 1;
+        if (fa !== 1 || sa !== 1) cs.setGState(this.gsName(fa, sa));
+        cs.path(it.segs);
+        if (it.fill && it.stroke) cs.fillAndStroke(it.evenOdd);
+        else if (it.fill) cs.fill(it.evenOdd);
+        else cs.stroke();
+        cs.restore();
+        this.curAlpha = 1;
+      } else if (it.type === 'gradient') {
+        const g = this.gradients.get(it);
+        if (!g || it.box.w <= 0 || it.box.h <= 0) continue;
+        cs.save();
+        this.clipBox(it.clip);
+        // 箱ローカルの CSS px 空間（左上原点・y 下向き）へ写す。シェーディングの座標系もこれ。
+        cs.transform(PX_TO_PT, 0, 0, -PX_TO_PT, this.X(it.box.x), this.Y(it.box.y));
+        if (g.gs) cs.setGState(g.gs);
+        else this.setAlpha(it.alpha);
+        cs.shading(g.sh);
+        cs.restore();
+        this.curAlpha = 1;
       } else if (it.type === 'image') {
         const im = this.images.get(it.image.key);
         if (!im || it.w <= 0 || it.h <= 0) continue;
@@ -415,6 +504,8 @@ function buildTJ(it, ef) {
 /** @param {import('./walker/walk.js').DisplayItem} it */
 function itemTop(it) {
   if (it.type === 'rect' || it.type === 'stroke-rrect' || it.type === 'image') return it.y;
+  if (it.type === 'gradient') return it.clip.y;
+  if (it.type === 'path') return it.top;
   if (it.type === 'line') return Math.min(it.y1, it.y2) - it.width / 2;
   if (it.type === 'group' || it.type === 'clip') return it.top;
   return it.top;
@@ -423,6 +514,8 @@ function itemTop(it) {
 /** @param {import('./walker/walk.js').DisplayItem} it */
 function itemBottom(it) {
   if (it.type === 'rect' || it.type === 'stroke-rrect' || it.type === 'image') return it.y + it.h;
+  if (it.type === 'gradient') return it.clip.y + it.clip.h;
+  if (it.type === 'path') return it.bottom;
   if (it.type === 'line') return Math.max(it.y1, it.y2) + it.width / 2;
   if (it.type === 'group' || it.type === 'clip') return it.bottom;
   return it.bottom;

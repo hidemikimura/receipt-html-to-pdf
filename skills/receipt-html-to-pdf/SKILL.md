@@ -45,7 +45,7 @@ npm を使わない場合は CDN の URL をそのまま `import` できる（`d
 ```html
 <script type="module">
   import { registerFont, htmlToPdf, downloadPdf }
-    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.2.1/dist/receipt-html-to-pdf.min.js';
+    from 'https://cdn.jsdelivr.net/npm/@hidemikimura/receipt-html-to-pdf@0.3.0/dist/receipt-html-to-pdf.min.js';
 </script>
 ```
 
@@ -92,16 +92,21 @@ npm を使わない場合は CDN の URL をそのまま `import` できる（`d
 | `baseUrl` | 現在の文書 | 相対 URL（フォント・画像）の基準 |
 | `output` | `'blob'` | `'uint8array'` `'dataurl'` |
 | `onWarning` | — | 未対応 CSS・欠落グリフ・画像失敗の通知。**必ず配線する** |
+| `onProgress` | — | `render` → `walk` → `layout`（`totalPages` 確定）→ `page`（1 ページずつ）→ `done`。長い文書の進捗表示に使う |
 
 ## 対応している CSS の要点
 
 レイアウト系（`display` 全般・Flexbox・Grid・テーブル・`position`・`margin`・`padding`・`white-space`・`word-break`・`text-align`・`line-height`・`letter-spacing`）は**ブラウザの計算結果をそのまま使うので全部そのとおりに出る**。追加実装は不要。
 
-描画系で対応しているもの: `color`、`background-color`、`background-image: url()`（単一・`no-repeat`）、`border-*`（辺ごと、solid / dashed / dotted）、`border-collapse: collapse`、`border-radius`、`opacity`、`text-decoration`（underline / line-through）、`overflow: hidden` のクリップ、`<img>`（PNG 透過・JPEG・`object-fit`）、2D `transform`、`::before` / `::after`（引用文字列の `content` のみ）。
+描画系で対応しているもの: `color`、`background-color`、`background-image: url()`（単一。`background-repeat` は `repeat` / `-x` / `-y` / `space` / `round` に対応）、`background-image: linear-gradient()`（ベクター。色止めごとのアルファも可）、`border-*`（辺ごと、solid / dashed / dotted）、`border-collapse: collapse`、`border-radius`、`opacity`、`text-decoration`（underline / line-through）、`overflow: hidden` のクリップ、`<img>`（PNG 透過・JPEG・`object-fit`）、インライン `<svg>`（パス・基本図形をベクター変換）、2D `transform`、`::before` / `::after`（引用文字列の `content` のみ）。
 
-**出力されないもの**（`onWarning` に `unsupported-css` が届く）: `box-shadow`、`text-shadow`、グラデーション、`filter`、`clip-path`、`outline`、縦書き、3D transform、`counter()` の content、インライン `<svg>` / `<canvas>` / `<video>`。
+GSUB の**単一置換**（`zero`・`jp90` などの異体字・`fwid` / `hwid`・`smcp`）は `font-variant-*` / `font-feature-settings` の指定どおりに再現する。**合字（`liga` / `dlig`）は未対応**。
 
-代替の指針: 影 → ボーダーか薄い背景色。グラデーション → 単色か画像。インライン SVG → `<img src="x.svg">`（ラスタライズされて埋め込まれる）。
+**数字の桁を揃えたいとき**: `tabular-nums` は日本語フォントでは効かないことが多い（BIZ UDPGothic・Noto Sans JP などに `tnum` 機能が無く、ブラウザ側でも何も起きない）。数字の送り幅がもともと揃っているフォント（BIZ UD**G**othic など）を選ぶか、表のセルを右揃え + 列幅固定にする。
+
+**出力されないもの**（`onWarning` に `unsupported-css` が届く）: `box-shadow`、`text-shadow`、`repeating-linear-gradient` / `radial-gradient` / `conic-gradient`、`filter`、`clip-path`、`outline`、縦書き、3D transform、`counter()` の content、`<canvas>` / `<video>`、SVG の `<text>` / `<use>` / paint server（`fill="url(#id)"`）。
+
+代替の指針: 影 → ボーダーか薄い背景色。放射・円錐グラデーション → `linear-gradient` か単色、画像。SVG の文字 → 事前にパス化しておく（`<text>` は飛ばされる）。`<img src="x.svg">` はラスタライズされるので、ベクターにしたいならインラインで置く。
 
 全プロパティの詳細表は `docs/css-support.md`。
 
@@ -112,6 +117,8 @@ npm を使わない場合は CDN の URL をそのまま `import` できる（`d
 - テキストの行、`<tr>`、`<thead>`、`<tfoot>`、`<img>`
 - `break-inside: avoid`（`page-break-inside: avoid`）を指定した要素
 
+`break-after: avoid` / `break-before: avoid` を書くと、隣の箱と同じページに保つ（見出しがページ末尾に取り残されるのを防ぐ）。兄弟が無ければ親をさかのぼるので、`<section>` の最後の見出しに書いても次の `<section>` と結びつく。結んだ範囲が 1 ページに収まらない場合は諦めて普通に分割する。
+
 強制改ページは `break-before: page` / `break-after: page`（`page-break-*: always` も可）。表が次ページへ続くときは **`<thead>` が各ページ先頭に、`<tfoot>` がそのページ最後の行の直下に**自動で繰り返される。
 
 ページ番号を入れるなら:
@@ -120,7 +127,17 @@ npm を使わない場合は CDN の URL をそのまま `import` できる（`d
 footer: '<div style="text-align:center;font-size:8pt">{{pageNumber}} / {{totalPages}}</div>'
 ```
 
-`orphans` / `widows` / `break-*: avoid` / `@page` は未対応。用紙サイズと余白は `options.page` で指定する。
+`orphans` / `widows` / `@page` は未対応。用紙サイズと余白は `options.page` で指定する。
+
+## 長い文書
+
+変換は途中でイベントループへ戻すので、数百ページでも画面は固まらない（所要時間は 1 割ほど増える）。進捗表示を出すなら `onProgress` を配線する。
+
+```js
+onProgress: (p) => { if (p.phase === 'page') bar.value = p.page / p.totalPages; }
+```
+
+デコード済みの画像データは PDF へ埋め込んだ時点で解放される。同じ画像を次の変換でも使う場合は読み直しになる（速度よりメモリを優先している）。
 
 ## 変換対象の要素についての決まり
 
